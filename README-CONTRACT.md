@@ -19,7 +19,7 @@ This project implements a **fully on-chain order management system** for the Ste
 contracts/
 ├── hello-world/
 │ ├── src/
-│ │ ├── lib.rs # Main contract
+│ │ ├── lib.rs # The Main contract
 │ │ ├── order.rs # Order logic
 │ │ ├── escrow.rs # Escrow logic
 │ │ └── tests.rs # Integration tests

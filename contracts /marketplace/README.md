@@ -40,9 +40,9 @@ marketplace/
 │   ├── errors.rs           # Error codes
 │   ├── events.rs           # Event definitions
 │   ├── storage.rs          # Storage getters/setters
-│   ├── test.rs             # Unit tests
-│   └── integration_tests.rs # Integration tests
-└── Cargo.toml
+│   └── test.rs             # Unit and integration tests
+├── Cargo.toml              # Contract dependencies
+└── README.md               # This file
 ```
 
 ### Data Structures
@@ -91,7 +91,7 @@ The contract implements efficient storage with automatic TTL extension:
 ### Initialization
 
 ```rust
-pub fn initialize(e: Env, admin: Address, base_fee_rate: u32) -> Result<(), Error>
+pub fn initialize(e: &Env, admin: Address, base_fee_rate: u32) -> Result<(), Error>
 ```
 
 Initialize the marketplace with an admin address and base fee rate (in basis points).
@@ -99,32 +99,34 @@ Initialize the marketplace with an admin address and base fee rate (in basis poi
 ### Seller Management
 
 ```rust
-pub fn register_seller(e: Env, metadata: String) -> Result<(), Error>
-pub fn get_seller(e: Env, address: Address) -> Result<Seller, Error>
-pub fn verify_seller(e: Env, seller_address: Address) -> Result<(), Error>
-pub fn suspend_seller(e: Env, seller_address: Address) -> Result<(), Error>
-pub fn unsuspend_seller(e: Env, seller_address: Address) -> Result<(), Error>
-pub fn update_seller_rating(e: Env, seller_address: Address, new_rating: u32) -> Result<(), Error>
+pub fn register_seller(e: &Env, seller: Address, metadata: String) -> Result<(), Error>
+pub fn get_seller(e: &Env, seller_address: Address) -> Result<Seller, Error>
+pub fn verify_seller(e: &Env, admin: Address, seller_address: Address) -> Result<(), Error>
+pub fn suspend_seller(e: &Env, admin: Address, seller_address: Address) -> Result<(), Error>
+pub fn unsuspend_seller(e: &Env, admin: Address, seller_address: Address) -> Result<(), Error>
+pub fn update_seller_rating(e: &Env, admin: Address, seller_address: Address, new_rating: u32) -> Result<(), Error>
 ```
 
 ### Category Management
 
 ```rust
 pub fn create_category(
-    e: Env,
+    e: &Env,
+    admin: Address,
     id: u32,
     name: String,
     description: String,
     commission_rate: u32,
 ) -> Result<(), Error>
-pub fn get_category(e: Env, id: u32) -> Result<Category, Error>
+pub fn get_category(e: &Env, id: u32) -> Result<Category, Error>
 ```
 
 ### Product Management
 
 ```rust
 pub fn add_product(
-    e: Env,
+    e: &Env,
+    seller: Address,
     name: String,
     description: String,
     category_id: u32,
@@ -132,25 +134,26 @@ pub fn add_product(
     stock_quantity: u64,
     metadata: String,
 ) -> Result<u64, Error>
-pub fn get_product(e: Env, product_id: u64) -> Result<Product, Error>
+pub fn get_product(e: &Env, product_id: u64) -> Result<Product, Error>
 pub fn update_product(
-    e: Env,
+    e: &Env,
+    seller: Address,
     product_id: u64,
     price: u128,
     stock_quantity: u64,
     status: u32,
 ) -> Result<(), Error>
-pub fn delist_product(e: Env, product_id: u64) -> Result<(), Error>
-pub fn update_product_rating(e: Env, product_id: u64, new_rating: u32) -> Result<(), Error>
+pub fn delist_product(e: &Env, seller: Address, product_id: u64) -> Result<(), Error>
+pub fn update_product_rating(e: &Env, seller: Address, product_id: u64, new_rating: u32) -> Result<(), Error>
 ```
 
 ### Search & Filtering
 
 ```rust
-pub fn get_products_by_seller(e: Env, seller_address: Address) -> Result<Vec<u64>, Error>
-pub fn get_products_by_category(e: Env, category_id: u32) -> Result<Vec<u64>, Error>
+pub fn get_products_by_seller(e: &Env, seller_address: Address) -> Result<Vec<u64>, Error>
+pub fn get_products_by_category(e: &Env, category_id: u32) -> Result<Vec<u64>, Error>
 pub fn get_products_by_price_range(
-    e: Env,
+    e: &Env,
     min_price: u128,
     max_price: u128,
     offset: u32,
@@ -161,20 +164,20 @@ pub fn get_products_by_price_range(
 ### Fee Management
 
 ```rust
-pub fn calculate_fee(e: Env, amount: u128, category_id: Option<u32>) -> Result<u128, Error>
-pub fn record_fee_collection(e: Env, amount: u128) -> Result<(), Error>
-pub fn get_total_fees(e: Env) -> Result<u128, Error>
-pub fn set_fee_rate(e: Env, new_rate: u32) -> Result<(), Error>
-pub fn set_category_fee_rate(e: Env, category_id: u32, rate: u32) -> Result<(), Error>
+pub fn calculate_fee(e: &Env, amount: u128, category_id: Option<u32>) -> Result<u128, Error>
+pub fn record_fee_collection(e: &Env, admin: Address, amount: u128) -> Result<(), Error>
+pub fn get_total_fees(e: &Env) -> Result<u128, Error>
+pub fn set_fee_rate(e: &Env, admin: Address, new_rate: u32) -> Result<(), Error>
+pub fn set_category_fee_rate(e: &Env, admin: Address, category_id: u32, rate: u32) -> Result<(), Error>
 ```
 
 ### Marketplace Administration
 
 ```rust
-pub fn set_paused(e: Env, paused: bool) -> Result<(), Error>
-pub fn is_paused(e: Env) -> Result<bool, Error>
-pub fn get_config(e: Env) -> Result<MarketplaceConfig, Error>
-pub fn get_stats(e: Env) -> Result<(u64, u64, u128), Error>
+pub fn set_paused(e: &Env, admin: Address, paused: bool) -> Result<(), Error>
+pub fn is_paused(e: &Env) -> Result<bool, Error>
+pub fn get_config(e: &Env) -> Result<MarketplaceConfig, Error>
+pub fn get_stats(e: &Env) -> Result<(u64, u64, u128), Error>
 ```
 
 ## Error Handling
@@ -195,6 +198,14 @@ The contract implements comprehensive error handling with specific error codes:
 | CategoryNotFound | 509 | Category doesn't exist |
 | MarketplacePaused | 510 | Marketplace is paused |
 | OutOfStock | 511 | Product out of stock |
+| InvalidProductStatus | 512 | Invalid product status value |
+| InvalidSellerStatus | 513 | Invalid seller status value |
+| FeeOverflow | 514 | Fee calculation overflow |
+| PointsOverflow | 515 | Points calculation overflow |
+| CategoryAlreadyExists | 516 | Category already exists |
+| OperationFailed | 517 | Operation failed |
+| InvalidMetadata | 518 | Invalid metadata provided |
+| SellerSuspended | 519 | Seller is suspended |
 
 ## Events
 
@@ -220,76 +231,77 @@ The contract emits events for all major operations:
 
 ### Unit Tests
 
-Comprehensive unit test suite with >90% code coverage:
+Comprehensive unit test suite covering all major functionality:
 
 ```bash
-cargo test --lib test::
+cargo test --lib
 ```
 
 Tests cover:
-- Initialization and configuration
-- Seller registration and verification
-- Category management
-- Product listing and updates
-- Fee calculations
-- Marketplace controls
-- Search and filtering
-- Error handling
+- Initialization and configuration management
+- Seller registration, verification, and status management
+- Category creation and management
+- Product listing, updates, and status changes
+- Fee calculations and collection
+- Marketplace pause/unpause functionality
+- Search and filtering operations
+- Error handling and edge cases
 
-### Integration Tests
+## Building the Contract
 
-Integration tests demonstrating real-world workflows:
+### Prerequisites
+
+- Rust 1.70+ with `wasm32-unknown-unknown` target
+- Soroban CLI (optional, for deployment)
+
+### Build for Local Testing
 
 ```bash
-cargo test --lib integration_tests::
+cd stellar-contracts/marketplace
+cargo build --lib
 ```
 
-Test scenarios:
-- Complete marketplace workflow
-- Seller lifecycle management
-- Product lifecycle management
-- Fee management and calculations
-- Emergency controls
-- Product search and filtering
-- Configuration updates
-
-## Building for Testnet
-
-### Build WASM
+### Build WASM for Testnet
 
 ```bash
 cargo build --target wasm32-unknown-unknown --release
 ```
 
+The WASM binary will be at: `target/wasm32-unknown-unknown/release/marketx_contract.wasm`
+
 ### Deploy to Testnet
 
 1. Get testnet credentials from [Stellar Lab](https://lab.stellar.org/)
-2. Use Stellar CLI to deploy:
+2. Use Soroban CLI to deploy:
 
 ```bash
 soroban contract deploy \
   --wasm target/wasm32-unknown-unknown/release/marketx_contract.wasm \
   --network testnet \
-  --source SBXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+  --source YOUR_STELLAR_ADDRESS
 ```
 
 ## Gas Optimization
 
 The contract is optimized for gas efficiency:
 
-1. **Minimal Storage Access**: Batch related operations
-2. **Efficient Encoding**: Use compact data structures
-3. **Smart TTL Management**: Extend TTL only when necessary
-4. **Pagination**: Limit result sets for search operations
-5. **Type-Safe Keys**: Prevent unnecessary lookups
+1. **Minimal Storage Access**: Batch related operations to reduce storage calls
+2. **Efficient Encoding**: Use compact native types (u32, u64, u128)
+3. **Smart TTL Management**: Extend TTL only during state mutations
+4. **Pagination**: Limit search results to prevent excessive iteration
+5. **Type-Safe Keys**: Enum-based storage keys prevent lookup errors
 
-Release profile configuration:
+Workspace-level release profile optimization:
 ```toml
 [profile.release]
 opt-level = "z"
-lto = true
+overflow-checks = true
+debug = 0
+strip = "symbols"
+debug-assertions = false
+panic = "abort"
 codegen-units = 1
-strip = true
+lto = true
 ```
 
 ## Best Practices Implemented

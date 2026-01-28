@@ -2,6 +2,10 @@
 
 mod order;
 mod escrow;
+pub mod events;
+
+#[cfg(test)]
+mod tests;
 
 use soroban_sdk::{contract, contractimpl, Env, Address};
 use order::Order;

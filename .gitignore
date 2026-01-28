@@ -1,0 +1,18 @@
+# Build artifacts
+target/
+
+# Cargo lock for libraries (optional - remove if you want to commit it)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Soroban
+.soroban/

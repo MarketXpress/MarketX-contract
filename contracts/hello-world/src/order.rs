@@ -1,6 +1,11 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, String, Symbol};
 
 use crate::escrow;
+use crate::events::{
+    emit_order_created, emit_order_cancelled, emit_order_shipped,
+    emit_order_delivered, emit_order_disputed, emit_dispute_resolved,
+    emit_user_action, OrderCancelReason, UserAction,
+};
 
 #[contracttype]
 #[derive(Clone, PartialEq, Debug)]
@@ -57,7 +62,7 @@ pub fn create_order(
         id,
         buyer: buyer.clone(),
         seller: seller.clone(),
-        asset,
+        asset: asset.clone(),
         amount,
         status: OrderStatus::Created,
         shipping_ref: None,
@@ -67,7 +72,12 @@ pub fn create_order(
     orders.set(id, order);
     save_orders(&env, orders);
 
-    escrow::lock_funds(&env, buyer, seller); // lock funds at creation
+    escrow::lock_funds(&env, buyer.clone(), seller.clone(), asset.clone(), amount, id);
+    
+    // Emit order created event
+    emit_order_created(&env, id, buyer.clone(), seller.clone(), asset, amount);
+    emit_user_action(&env, buyer, UserAction::CreateOrder, id);
+    
     id
 }
 
@@ -86,9 +96,13 @@ pub fn cancel_order(env: Env, buyer: Address, order_id: u64) {
     }
 
     order.status = OrderStatus::Cancelled;
-    escrow::refund_buyer(&env, buyer.clone());
+    escrow::refund_buyer(&env, buyer.clone(), order.asset.clone(), order.amount, order_id);
     orders.set(order_id, order);
     save_orders(&env, orders);
+    
+    // Emit order cancelled event
+    emit_order_cancelled(&env, order_id, buyer.clone(), OrderCancelReason::BuyerRequested);
+    emit_user_action(&env, buyer, UserAction::CancelOrder, order_id);
 }
 
 pub fn ship_order(env: Env, seller: Address, order_id: u64, shipping_ref: String) {
@@ -106,10 +120,14 @@ pub fn ship_order(env: Env, seller: Address, order_id: u64, shipping_ref: String
     }
 
     order.status = OrderStatus::Shipped;
-    order.shipping_ref = Some(shipping_ref);
+    order.shipping_ref = Some(shipping_ref.clone());
 
     orders.set(order_id, order);
     save_orders(&env, orders);
+    
+    // Emit order shipped event
+    emit_order_shipped(&env, order_id, seller.clone(), shipping_ref);
+    emit_user_action(&env, seller, UserAction::ShipOrder, order_id);
 }
 
 pub fn deliver_order(env: Env, buyer: Address, order_id: u64) {
@@ -127,9 +145,13 @@ pub fn deliver_order(env: Env, buyer: Address, order_id: u64) {
     }
 
     order.status = OrderStatus::Delivered;
-    escrow::release_funds(&env, order.seller.clone());
-    orders.set(order_id, order);
+    escrow::release_funds(&env, order.seller.clone(), order.asset.clone(), order.amount, order_id);
+    orders.set(order_id, order.clone());
     save_orders(&env, orders);
+    
+    // Emit order delivered event
+    emit_order_delivered(&env, order_id, buyer.clone(), order.seller.clone(), order.amount);
+    emit_user_action(&env, buyer, UserAction::ConfirmDelivery, order_id);
 }
 
 pub fn dispute_order(env: Env, buyer: Address, order_id: u64) {
@@ -149,9 +171,13 @@ pub fn dispute_order(env: Env, buyer: Address, order_id: u64) {
     order.status = OrderStatus::Disputed;
     orders.set(order_id, order);
     save_orders(&env, orders);
+    
+    // Emit order disputed event
+    emit_order_disputed(&env, order_id, buyer.clone());
+    emit_user_action(&env, buyer, UserAction::RaiseDispute, order_id);
 }
 
-pub fn resolve_dispute(env: Env, _admin: Address, order_id: u64, refund: bool) {
+pub fn resolve_dispute(env: Env, admin: Address, order_id: u64, refund: bool) {
     // Admin auth can be added here
     let mut orders = load_orders(&env);
     let mut order = orders.get(order_id).expect("Order not found");
@@ -162,14 +188,17 @@ pub fn resolve_dispute(env: Env, _admin: Address, order_id: u64, refund: bool) {
 
     if refund {
         order.status = OrderStatus::Refunded;
-        escrow::refund_buyer(&env, order.buyer.clone());
+        escrow::refund_buyer(&env, order.buyer.clone(), order.asset.clone(), order.amount, order_id);
     } else {
         order.status = OrderStatus::Delivered;
-        escrow::release_funds(&env, order.seller.clone());
+        escrow::release_funds(&env, order.seller.clone(), order.asset.clone(), order.amount, order_id);
     }
 
     orders.set(order_id, order);
     save_orders(&env, orders);
+    
+    // Emit dispute resolved event
+    emit_dispute_resolved(&env, order_id, admin, refund);
 }
 
 pub fn get_order(env: Env, order_id: u64) -> Order {

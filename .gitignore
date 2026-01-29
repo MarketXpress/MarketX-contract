@@ -1,3 +1,9 @@
+# Cargo lock for libraries (optional - remove if you want to commit it)
+# Cargo.lock
+
+# Soroban
+.soroban/
+
 # Rust
 target/
 Cargo.lock
@@ -16,3 +22,4 @@ Cargo.lock
 Thumbs.db
 
 # Project specific
+

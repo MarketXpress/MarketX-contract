@@ -1,18 +1,25 @@
-# Build artifacts
-target/
-
 # Cargo lock for libraries (optional - remove if you want to commit it)
 # Cargo.lock
 
+# Soroban
+.soroban/
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
 # IDE
-.idea/
 .vscode/
+.idea/
 *.swp
 *.swo
+*~
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Soroban
-.soroban/
+# Project specific
+

@@ -1,3 +1,4 @@
+
 # MarketXpress Auction Contract
 
 A comprehensive auction and bidding smart contract built on Stellar's Soroban platform, enabling competitive pricing through time-based auctions with automatic bid processing, reserve prices, and buy-now options.

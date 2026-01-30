@@ -8,11 +8,19 @@ use soroban_sdk::{
     token, Address, Env,
 };
 
-pub fn setup_test() -> (Env, AuctionContractClient<'static>, Address, Address, Address, Address, token::TokenClient<'static>) {
+pub fn setup_test() -> (
+    Env,
+    AuctionContractClient<'static>,
+    Address,
+    Address,
+    Address,
+    Address,
+    token::TokenClient<'static>,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AuctionContract);
+    let contract_id = env.register(AuctionContract, ());
     let client = AuctionContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -30,13 +38,21 @@ pub fn setup_test() -> (Env, AuctionContractClient<'static>, Address, Address, A
 
     client.initialize(&admin);
 
-    (env, client, admin, seller, buyer, token_address, token_client)
+    (
+        env,
+        client,
+        admin,
+        seller,
+        buyer,
+        token_address,
+        token_client,
+    )
 }
 
 pub fn advance_ledger(env: &Env, seconds: u64) {
     env.ledger().set(LedgerInfo {
         timestamp: env.ledger().timestamp() + seconds,
-        protocol_version: 20,
+        protocol_version: 23,
         sequence_number: env.ledger().sequence(),
         network_id: Default::default(),
         base_reserve: 10,

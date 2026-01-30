@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, Address, Env, String};
+use soroban_sdk::{testutils::Address as _, Address, Env, String, Vec, token};
 
 use crate::types::*;
 use crate::{MarketX, MarketXClient};
@@ -16,7 +16,7 @@ fn setup_env() -> (Env, Address) {
     (e, admin)
 }
 
-fn initialize_marketplace(e: &Env, admin: &Address) -> MarketXClient {
+fn initialize_marketplace(e: &Env, admin: &Address) -> MarketXClient<'static> {
     let client = MarketXClient::new(e, &Address::random(e));
     client.initialize(admin, &250);
     client
@@ -25,14 +25,14 @@ fn initialize_marketplace(e: &Env, admin: &Address) -> MarketXClient {
 fn create_seller(e: &Env, client: &MarketXClient) -> Address {
     let seller = Address::random(e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(e, "Seller metadata");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(e, "Seller metadata");
+    client.register_seller(&seller, &metadata);
     seller
 }
 
 fn verify_seller(e: &Env, client: &MarketXClient, admin: &Address, seller: &Address) {
     e.mock_all_auths();
-    client.verify_seller(seller);
+    client.verify_seller(admin, seller);
 }
 
 // ============================================================================
@@ -147,8 +147,8 @@ fn test_register_seller() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    let result = client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    let result = client.register_seller(&seller, &metadata);
     assert_eq!(result, ());
 
     let seller_info = client.get_seller(&seller);
@@ -164,11 +164,11 @@ fn test_register_seller_already_exists() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.register_seller(&metadata);
+        client.register_seller(&seller, &metadata);
     }));
 
     assert!(result.is_err());
@@ -184,9 +184,9 @@ fn test_register_seller_marketplace_paused() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
+    let metadata = String::from_str(&e, "Test seller");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        client.register_seller(&metadata);
+        client.register_seller(&seller, &metadata);
     }));
 
     assert!(result.is_err());
@@ -200,10 +200,10 @@ fn test_verify_seller() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
-    let result = client.verify_seller(&seller);
+    let result = client.verify_seller(&admin, &seller);
     assert_eq!(result, ());
 
     let seller_info = client.get_seller(&seller);
@@ -218,9 +218,9 @@ fn test_suspend_seller() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
     let result = client.suspend_seller(&seller);
     assert_eq!(result, ());
@@ -237,9 +237,9 @@ fn test_unsuspend_seller() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
     client.suspend_seller(&seller);
 
     let result = client.unsuspend_seller(&seller);
@@ -257,8 +257,8 @@ fn test_update_seller_rating() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
     let result = client.update_seller_rating(&seller, &400); // 4 stars
     assert_eq!(result, ());
@@ -275,8 +275,8 @@ fn test_update_seller_rating_invalid() {
     let seller = Address::random(&e);
     e.mock_all_auths();
 
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.update_seller_rating(&seller, &600); // > 5 stars
@@ -294,8 +294,8 @@ fn test_create_category() {
     let (e, admin) = setup_env();
     let client = initialize_marketplace(&e, &admin);
 
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
 
     let result = client.create_category(&1, &name, &description, &300);
     assert_eq!(result, ());
@@ -310,8 +310,8 @@ fn test_create_category_duplicate() {
     let (e, admin) = setup_env();
     let client = initialize_marketplace(&e, &admin);
 
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
 
     client.create_category(&1, &name, &description, &300);
 
@@ -327,8 +327,8 @@ fn test_create_category_invalid_fee_rate() {
     let (e, admin) = setup_env();
     let client = initialize_marketplace(&e, &admin);
 
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_category(&1, &name, &description, &10001);
@@ -347,20 +347,20 @@ fn test_add_product() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup category and seller
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
     // Add product
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
 
     let result = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
 
@@ -373,20 +373,20 @@ fn test_add_product_seller_not_verified() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup category
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     // Register but don't verify
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
     // Try to add product
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
@@ -403,14 +403,14 @@ fn test_add_product_invalid_category() {
     // Register and verify seller
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
     // Try to add product with non-existent category
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.add_product(&product_name, &product_desc, &999, &100_000_000, &10, &product_meta);
@@ -425,19 +425,19 @@ fn test_get_product() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
     let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
 
     let product = client.get_product(&product_id);
@@ -452,19 +452,19 @@ fn test_update_product() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
     let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
 
     // Update product
@@ -482,19 +482,19 @@ fn test_delist_product() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
     let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
 
     // Delist product
@@ -524,8 +524,8 @@ fn test_calculate_fee_category_rate() {
     let (e, admin) = setup_env();
     let client = initialize_marketplace(&e, &admin);
 
-    let name = String::from_small_copy(&e, "Electronics");
-    let description = String::from_small_copy(&e, "Electronic products");
+    let name = String::from_str(&e, "Electronics");
+    let description = String::from_str(&e, "Electronic products");
     client.create_category(&1, &name, &description, &300);
 
     let fee = client.calculate_fee(&1000_000, &Some(1));
@@ -580,20 +580,20 @@ fn test_get_products_by_seller() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup
-    let cat_name = String::from_small_copy(&e, "Electronics");
-    let cat_desc = String::from_small_copy(&e, "Electronic products");
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
     client.create_category(&1, &cat_name, &cat_desc, &300);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
     // Add products
-    let product_name = String::from_small_copy(&e, "Laptop");
-    let product_desc = String::from_small_copy(&e, "High performance laptop");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "High performance laptop");
+    let product_meta = String::from_str(&e, "{}");
 
     let id1 = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
     let id2 = client.add_product(&product_name, &product_desc, &1, &150_000_000, &5, &product_meta);
@@ -608,24 +608,24 @@ fn test_get_products_by_category() {
     let client = initialize_marketplace(&e, &admin);
 
     // Setup categories
-    let cat_name = String::from_small_copy(&e, "Electronics");
-    let cat_desc = String::from_small_copy(&e, "Electronic products");
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
     client.create_category(&1, &cat_name, &cat_desc, &300);
 
-    let cat_name2 = String::from_small_copy(&e, "Books");
-    let cat_desc2 = String::from_small_copy(&e, "Books");
+    let cat_name2 = String::from_str(&e, "Books");
+    let cat_desc2 = String::from_str(&e, "Books");
     client.create_category(&2, &cat_name2, &cat_desc2, &200);
 
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
-    client.verify_seller(&seller);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
 
     // Add products to different categories
-    let product_name = String::from_small_copy(&e, "Product");
-    let product_desc = String::from_small_copy(&e, "Description");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Product");
+    let product_desc = String::from_str(&e, "Description");
+    let product_meta = String::from_str(&e, "{}");
 
     client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
     client.add_product(&product_name, &product_desc, &2, &100_000_000, &10, &product_meta);
@@ -654,8 +654,8 @@ fn test_get_stats() {
     // Add seller
     let seller = Address::random(&e);
     e.mock_all_auths();
-    let metadata = String::from_small_copy(&e, "Test seller");
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
 
     let stats = client.get_stats();
     assert_eq!(stats.1, 1); // total_sellers should be 1
@@ -694,44 +694,44 @@ fn test_complete_marketplace_workflow() {
     assert_eq!(config.total_sellers, 0);
 
     // 2. Create categories
-    let electronics_name = String::from_small_copy(&e, "Electronics");
-    let electronics_desc = String::from_small_copy(&e, "Electronic devices and accessories");
+    let electronics_name = String::from_str(&e, "Electronics");
+    let electronics_desc = String::from_str(&e, "Electronic devices and accessories");
     client.create_category(&1, &electronics_name, &electronics_desc, &300); // 3% commission
 
-    let books_name = String::from_small_copy(&e, "Books");
-    let books_desc = String::from_small_copy(&e, "Physical and digital books");
+    let books_name = String::from_str(&e, "Books");
+    let books_desc = String::from_str(&e, "Physical and digital books");
     client.create_category(&2, &books_name, &books_desc, &200); // 2% commission
 
     // 3. Register sellers
-    let seller1_metadata = String::from_small_copy(&e, r#"{"name":"TechStore","reputation":4.8}"#);
-    let seller2_metadata = String::from_small_copy(&e, r#"{"name":"BookNook","reputation":4.5}"#);
+    let seller1_metadata = String::from_str(&e, r#"{"name":"TechStore","reputation":4.8}"#);
+    let seller2_metadata = String::from_str(&e, r#"{"name":"BookNook","reputation":4.5}"#);
 
     e.mock_all_auths();
-    client.register_seller(&seller1_metadata);
+    client.register_seller(&seller1, &seller1_metadata);
 
     e.mock_all_auths();
-    client.register_seller(&seller2_metadata);
+    client.register_seller(&seller2, &seller2_metadata);
 
     // Verify sellers
-    client.verify_seller(&seller1);
-    client.verify_seller(&seller2);
+    client.verify_seller(&admin, &seller1);
+    client.verify_seller(&admin, &seller2);
 
     // Check seller info
     let seller1_info = client.get_seller(&seller1);
     assert_eq!(seller1_info.status.as_u32(), SellerStatus::Verified.as_u32());
 
     // 4. List products
-    let laptop_name = String::from_small_copy(&e, "Premium Laptop");
-    let laptop_desc = String::from_small_copy(&e, "High performance laptop with 16GB RAM");
-    let laptop_meta = String::from_small_copy(&e, r#"{"cpu":"i7","ram":"16GB","storage":"512SSD"}"#);
+    let laptop_name = String::from_str(&e, "Premium Laptop");
+    let laptop_desc = String::from_str(&e, "High performance laptop with 16GB RAM");
+    let laptop_meta = String::from_str(&e, r#"{"cpu":"i7","ram":"16GB","storage":"512SSD"}"#);
 
     e.mock_all_auths();
     let product1_id = client.add_product(&laptop_name, &laptop_desc, &1, &99_999_999, &5, &laptop_meta);
     assert_eq!(product1_id, 1);
 
-    let book_name = String::from_small_copy(&e, "Rust Programming");
-    let book_desc = String::from_small_copy(&e, "Learn Rust programming language");
-    let book_meta = String::from_small_copy(&e, r#"{"pages":"500","author":"John Doe"}"#);
+    let book_name = String::from_str(&e, "Rust Programming");
+    let book_desc = String::from_str(&e, "Learn Rust programming language");
+    let book_meta = String::from_str(&e, r#"{"pages":"500","author":"John Doe"}"#);
 
     e.mock_all_auths();
     let product2_id = client.add_product(&book_name, &book_desc, &2, &49_999_999, &20, &book_meta);
@@ -771,8 +771,8 @@ fn test_seller_lifecycle() {
     client.initialize(&admin, &250);
 
     // 1. Register seller (unverified)
-    let metadata = String::from_small_copy(&e, r#"{"name":"NewSeller","location":"USA"}"#);
-    client.register_seller(&metadata);
+    let metadata = String::from_str(&e, r#"{"name":"NewSeller","location":"USA"}"#);
+    client.register_seller(&seller, &metadata);
 
     let seller_info = client.get_seller(&seller);
     assert_eq!(seller_info.status.as_u32(), SellerStatus::Unverified.as_u32());
@@ -780,7 +780,7 @@ fn test_seller_lifecycle() {
     assert_eq!(seller_info.rating, 0);
 
     // 2. Verify seller
-    client.verify_seller(&seller);
+    client.verify_seller(&admin, &seller);
     let seller_info = client.get_seller(&seller);
     assert_eq!(seller_info.status.as_u32(), SellerStatus::Verified.as_u32());
 
@@ -813,18 +813,18 @@ fn test_product_lifecycle() {
     client.initialize(&admin, &250);
 
     // Setup
-    let cat_name = String::from_small_copy(&e, "Electronics");
-    let cat_desc = String::from_small_copy(&e, "Electronic devices");
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic devices");
     client.create_category(&1, &cat_name, &cat_desc, &300);
 
-    let seller_metadata = String::from_small_copy(&e, "Seller");
-    client.register_seller(&seller_metadata);
-    client.verify_seller(&seller);
+    let seller_metadata = String::from_str(&e, "Seller");
+    client.register_seller(&seller, &seller_metadata);
+    client.verify_seller(&admin, &seller);
 
     // 1. Create product
-    let name = String::from_small_copy(&e, "Smartphone");
-    let desc = String::from_small_copy(&e, "Latest smartphone model");
-    let meta = String::from_small_copy(&e, r#"{"model":"X1","storage":"128GB"}"#);
+    let name = String::from_str(&e, "Smartphone");
+    let desc = String::from_str(&e, "Latest smartphone model");
+    let meta = String::from_str(&e, r#"{"model":"X1","storage":"128GB"}"#);
 
     e.mock_all_auths();
     let product_id = client.add_product(&name, &desc, &1, &799_999_999, &50, &meta);
@@ -870,12 +870,12 @@ fn test_fee_management() {
     client.initialize(&admin, &250); // 2.5% base fee
 
     // Create categories with different fees
-    let cat1_name = String::from_small_copy(&e, "Premium");
-    let cat1_desc = String::from_small_copy(&e, "Premium products");
+    let cat1_name = String::from_str(&e, "Premium");
+    let cat1_desc = String::from_str(&e, "Premium products");
     client.create_category(&1, &cat1_name, &cat1_desc, &500); // 5% commission
 
-    let cat2_name = String::from_small_copy(&e, "Economy");
-    let cat2_desc = String::from_small_copy(&e, "Economy products");
+    let cat2_name = String::from_str(&e, "Economy");
+    let cat2_desc = String::from_str(&e, "Economy products");
     client.create_category(&2, &cat2_name, &cat2_desc, &100); // 1% commission
 
     // Test fee calculations
@@ -920,17 +920,17 @@ fn test_marketplace_emergency_controls() {
     client.initialize(&admin, &250);
 
     // Setup
-    let cat_name = String::from_small_copy(&e, "General");
-    let cat_desc = String::from_small_copy(&e, "General products");
+    let cat_name = String::from_str(&e, "General");
+    let cat_desc = String::from_str(&e, "General products");
     client.create_category(&1, &cat_name, &cat_desc, &250);
 
-    let seller_meta = String::from_small_copy(&e, "Seller");
-    client.register_seller(&seller_meta);
-    client.verify_seller(&seller);
+    let seller_meta = String::from_str(&e, "Seller");
+    client.register_seller(&seller, &seller_meta);
+    client.verify_seller(&admin, &seller);
 
-    let product_name = String::from_small_copy(&e, "Product");
-    let product_desc = String::from_small_copy(&e, "A product");
-    let product_meta = String::from_small_copy(&e, "{}");
+    let product_name = String::from_str(&e, "Product");
+    let product_desc = String::from_str(&e, "A product");
+    let product_meta = String::from_str(&e, "{}");
 
     e.mock_all_auths();
     client.add_product(&product_name, &product_desc, &1, &100_000, &10, &product_meta);
@@ -943,10 +943,10 @@ fn test_marketplace_emergency_controls() {
     assert_eq!(client.is_paused(), true);
 
     // Try to register seller while paused
-    let new_seller_meta = String::from_small_copy(&e, "New seller");
+    let new_seller_meta = String::from_str(&e, "New seller");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         e.mock_all_auths();
-        client.register_seller(&new_seller_meta);
+        client.register_seller(&seller, &new_seller_meta);
     }));
     assert!(result.is_err()); // Should fail
 
@@ -969,45 +969,45 @@ fn test_product_search_and_filtering() {
     client.initialize(&admin, &250);
 
     // Create categories
-    let cat1_name = String::from_small_copy(&e, "Electronics");
-    let cat1_desc = String::from_small_copy(&e, "Electronics");
+    let cat1_name = String::from_str(&e, "Electronics");
+    let cat1_desc = String::from_str(&e, "Electronics");
     client.create_category(&1, &cat1_name, &cat1_desc, &300);
 
-    let cat2_name = String::from_small_copy(&e, "Clothing");
-    let cat2_desc = String::from_small_copy(&e, "Clothing");
+    let cat2_name = String::from_str(&e, "Clothing");
+    let cat2_desc = String::from_str(&e, "Clothing");
     client.create_category(&2, &cat2_name, &cat2_desc, &250);
 
     // Register sellers
-    let seller1_meta = String::from_small_copy(&e, "Seller 1");
-    let seller2_meta = String::from_small_copy(&e, "Seller 2");
+    let seller1_meta = String::from_str(&e, "Seller 1");
+    let seller2_meta = String::from_str(&e, "Seller 2");
 
     e.mock_all_auths();
-    client.register_seller(&seller1_meta);
+    client.register_seller(&seller1, &seller1_meta);
 
     e.mock_all_auths();
-    client.register_seller(&seller2_meta);
+    client.register_seller(&seller2, &seller2_meta);
 
-    client.verify_seller(&seller1);
-    client.verify_seller(&seller2);
+    client.verify_seller(&admin, &seller1);
+    client.verify_seller(&admin, &seller2);
 
     // Add products
-    let name1 = String::from_small_copy(&e, "Laptop");
-    let desc1 = String::from_small_copy(&e, "Laptop");
-    let meta1 = String::from_small_copy(&e, "{}");
+    let name1 = String::from_str(&e, "Laptop");
+    let desc1 = String::from_str(&e, "Laptop");
+    let meta1 = String::from_str(&e, "{}");
 
     e.mock_all_auths();
     client.add_product(&name1, &desc1, &1, &999_999_999, &5, &meta1);
 
-    let name2 = String::from_small_copy(&e, "T-Shirt");
-    let desc2 = String::from_small_copy(&e, "T-Shirt");
-    let meta2 = String::from_small_copy(&e, "{}");
+    let name2 = String::from_str(&e, "T-Shirt");
+    let desc2 = String::from_str(&e, "T-Shirt");
+    let meta2 = String::from_str(&e, "{}");
 
     e.mock_all_auths();
     client.add_product(&name2, &desc2, &2, &29_999_999, &100, &meta2);
 
-    let name3 = String::from_small_copy(&e, "Jeans");
-    let desc3 = String::from_small_copy(&e, "Jeans");
-    let meta3 = String::from_small_copy(&e, "{}");
+    let name3 = String::from_str(&e, "Jeans");
+    let desc3 = String::from_str(&e, "Jeans");
+    let meta3 = String::from_str(&e, "{}");
 
     e.mock_all_auths();
     client.add_product(&name3, &desc3, &2, &59_999_999, &50, &meta3);
@@ -1045,12 +1045,331 @@ fn test_marketplace_configuration() {
     assert_eq!(config.base_fee_rate, 500);
 
     // Update category fee rate
-    let cat_name = String::from_small_copy(&e, "Premium");
-    let cat_desc = String::from_small_copy(&e, "Premium products");
+    let cat_name = String::from_str(&e, "Premium");
+    let cat_desc = String::from_str(&e, "Premium products");
     client.create_category(&1, &cat_name, &cat_desc, &300);
 
     client.set_category_fee_rate(&1, &600); // 6% for premium
 
     let fee_with_category = client.calculate_fee(&1_000_000_000, &Some(1));
     assert_eq!(fee_with_category, 60_000_000); // 1B * 600 / 10000
+}
+
+// ============================================================================
+// BATCH OPERATION TESTS
+// ============================================================================
+
+#[test]
+fn test_batch_add_product() {
+    let (e, admin) = setup_env();
+    let client = initialize_marketplace(&e, &admin);
+
+    // Setup category and seller
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
+    client.create_category(&1, &cat_name, &cat_desc, &300);
+
+    let seller = Address::random(&e);
+    e.mock_all_auths();
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
+
+    // Prepare batch products
+    let mut products: Vec<BatchCreateProductInput> = Vec::new(&e);
+    
+    products.push_back(BatchCreateProductInput {
+        name: String::from_str(&e, "Laptop"),
+        description: String::from_str(&e, "High performance laptop"),
+        category_id: 1,
+        price: 100_000_000,
+        stock_quantity: 10,
+        metadata: String::from_str(&e, "{}"),
+    });
+
+    products.push_back(BatchCreateProductInput {
+        name: String::from_str(&e, "Mouse"),
+        description: String::from_str(&e, "Wireless mouse"),
+        category_id: 1,
+        price: 5_000_000,
+        stock_quantity: 50,
+        metadata: String::from_str(&e, "{}"),
+    });
+
+    e.mock_all_auths();
+    let results = client.batch_add_product(&seller, &products);
+    assert_eq!(results.len(), 2);
+    
+    // Check first product
+    let id1 = results.get(0).unwrap().unwrap();
+    let product1 = client.get_product(&id1);
+    assert_eq!(product1.price, 100_000_000);
+
+    // Check second product
+    let id2 = results.get(1).unwrap().unwrap();
+    let product2 = client.get_product(&id2);
+    assert_eq!(product2.price, 5_000_000);
+}
+
+#[test]
+fn test_batch_create_order() {
+    let (e, admin) = setup_env();
+    let client = initialize_marketplace(&e, &admin);
+
+    // Setup Token
+    let token_admin = Address::random(&e);
+    let token_contract = e.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&e, &token_contract);
+
+    // Setup
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
+    client.create_category(&1, &cat_name, &cat_desc, &300);
+
+    let seller = Address::random(&e);
+    e.mock_all_auths();
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
+
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "Laptop");
+    let product_meta = String::from_str(&e, "{}");
+    e.mock_all_auths();
+    let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
+
+    let buyer = Address::random(&e);
+    // Mint tokens to buyer
+    e.mock_all_auths();
+    token.mint(&buyer, &1000_000_000);
+
+    // Create batch orders
+    let mut orders: Vec<BatchCreateOrderInput> = Vec::new(&e);
+    orders.push_back(BatchCreateOrderInput {
+        product_id: product_id,
+        quantity: 2,
+    });
+
+    e.mock_all_auths();
+    let results = client.batch_create_order(&buyer, &token_contract, &orders);
+    assert_eq!(results.len(), 1);
+    
+    let order_id = results.get(0).unwrap().unwrap();
+    let order = client.get_order(&order_id);
+    assert_eq!(order.quantity, 2);
+    assert_eq!(order.total_amount, 200_000_000);
+    assert_eq!(order.status.as_u32(), OrderStatus::Paid.as_u32());
+}
+
+#[test]
+fn test_batch_update_order_status() {
+    let (e, admin) = setup_env();
+    let client = initialize_marketplace(&e, &admin);
+
+    let token_admin = Address::random(&e);
+    let token_contract = e.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&e, &token_contract);
+
+    // Setup
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
+    client.create_category(&1, &cat_name, &cat_desc, &300);
+
+    let seller = Address::random(&e);
+    e.mock_all_auths();
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
+
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "Laptop");
+    let product_meta = String::from_str(&e, "{}");
+    e.mock_all_auths();
+    let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
+
+    let buyer = Address::random(&e);
+    e.mock_all_auths();
+    token.mint(&buyer, &1000_000_000);
+    
+    let mut orders: Vec<BatchCreateOrderInput> = Vec::new(&e);
+    orders.push_back(BatchCreateOrderInput {
+        product_id: product_id,
+        quantity: 2,
+    });
+
+    e.mock_all_auths();
+    let order_ids = client.batch_create_order(&buyer, &token_contract, &orders);
+    let order_id = order_ids.get(0).unwrap().unwrap();
+
+    // Update status
+    let mut updates: Vec<BatchUpdateStatusInput> = Vec::new(&e);
+    updates.push_back(BatchUpdateStatusInput {
+        order_id: order_id,
+        new_status: OrderStatus::Shipped.as_u32(),
+    });
+
+    e.mock_all_auths();
+    let result = client.batch_update_order_status(&seller, &updates);
+    assert_eq!(result, ());
+
+    let order = client.get_order(&order_id);
+    assert_eq!(order.status.as_u32(), OrderStatus::Shipped.as_u32());
+}
+
+#[test]
+fn test_batch_release_escrow() {
+    let (e, admin) = setup_env();
+    let client = initialize_marketplace(&e, &admin);
+
+    let token_admin = Address::random(&e);
+    let token_contract = e.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&e, &token_contract);
+
+    // Setup
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
+    client.create_category(&1, &cat_name, &cat_desc, &300);
+
+    let seller = Address::random(&e);
+    e.mock_all_auths();
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
+
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "Laptop");
+    let product_meta = String::from_str(&e, "{}");
+    e.mock_all_auths();
+    let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
+
+    let buyer = Address::random(&e);
+    e.mock_all_auths();
+    token.mint(&buyer, &1000_000_000);
+    
+    // Create order
+    let mut orders: Vec<BatchCreateOrderInput> = Vec::new(&e);
+    orders.push_back(BatchCreateOrderInput {
+        product_id: product_id,
+        quantity: 1,
+    });
+
+    e.mock_all_auths();
+    let order_ids = client.batch_create_order(&buyer, &token_contract, &orders);
+    let order_id = order_ids.get(0).unwrap().unwrap();
+
+    // Update status to Delivered
+    let mut updates: Vec<BatchUpdateStatusInput> = Vec::new(&e);
+    updates.push_back(BatchUpdateStatusInput {
+        order_id: order_id,
+        new_status: OrderStatus::Shipped.as_u32(),
+    });
+    e.mock_all_auths();
+    client.batch_update_order_status(&seller, &updates);
+
+    let mut updates2: Vec<BatchUpdateStatusInput> = Vec::new(&e);
+    updates2.push_back(BatchUpdateStatusInput {
+        order_id: order_id,
+        new_status: OrderStatus::Delivered.as_u32(),
+    });
+    e.mock_all_auths();
+    client.batch_update_order_status(&buyer, &updates2);
+
+    // Release escrow
+    let mut release_ids: Vec<u64> = Vec::new(&e);
+    release_ids.push_back(order_id);
+
+    e.mock_all_auths();
+    let result = client.batch_release_escrow(&buyer, &token_contract, &release_ids);
+    assert_eq!(result, ());
+
+    let order = client.get_order(&order_id);
+    assert_eq!(order.status.as_u32(), OrderStatus::Completed.as_u32());
+    assert_eq!(order.escrow_balance, 0);
+
+    let seller_balance = token.balance(&seller);
+    // 100_000_000 total. 3% fee = 3_000_000. Seller gets 97_000_000.
+    assert_eq!(seller_balance, 97_000_000);
+}
+
+#[test]
+fn test_batch_submit_rating() {
+    let (e, admin) = setup_env();
+    let client = initialize_marketplace(&e, &admin);
+
+    let token_admin = Address::random(&e);
+    let token_contract = e.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&e, &token_contract);
+
+    // Setup
+    let cat_name = String::from_str(&e, "Electronics");
+    let cat_desc = String::from_str(&e, "Electronic products");
+    client.create_category(&1, &cat_name, &cat_desc, &300);
+
+    let seller = Address::random(&e);
+    e.mock_all_auths();
+    let metadata = String::from_str(&e, "Test seller");
+    client.register_seller(&seller, &metadata);
+    client.verify_seller(&admin, &seller);
+
+    let product_name = String::from_str(&e, "Laptop");
+    let product_desc = String::from_str(&e, "Laptop");
+    let product_meta = String::from_str(&e, "{}");
+    e.mock_all_auths();
+    let product_id = client.add_product(&product_name, &product_desc, &1, &100_000_000, &10, &product_meta);
+
+    let buyer = Address::random(&e);
+    e.mock_all_auths();
+    token.mint(&buyer, &1000_000_000);
+    
+    // Create order
+    let mut orders: Vec<BatchCreateOrderInput> = Vec::new(&e);
+    orders.push_back(BatchCreateOrderInput {
+        product_id: product_id,
+        quantity: 1,
+    });
+    e.mock_all_auths();
+    let order_ids = client.batch_create_order(&buyer, &token_contract, &orders);
+    let order_id = order_ids.get(0).unwrap().unwrap();
+
+    // Fast track to completion
+    let mut updates: Vec<BatchUpdateStatusInput> = Vec::new(&e);
+    updates.push_back(BatchUpdateStatusInput {
+        order_id: order_id,
+        new_status: OrderStatus::Shipped.as_u32(),
+    });
+    e.mock_all_auths();
+    client.batch_update_order_status(&seller, &updates);
+    
+    let mut updates2: Vec<BatchUpdateStatusInput> = Vec::new(&e);
+    updates2.push_back(BatchUpdateStatusInput {
+        order_id: order_id,
+        new_status: OrderStatus::Delivered.as_u32(),
+    });
+    e.mock_all_auths();
+    client.batch_update_order_status(&buyer, &updates2);
+
+    let mut release_ids: Vec<u64> = Vec::new(&e);
+    release_ids.push_back(order_id);
+    e.mock_all_auths();
+    client.batch_release_escrow(&buyer, &token_contract, &release_ids);
+
+    // Submit rating
+    let mut ratings: Vec<BatchSubmitRatingInput> = Vec::new(&e);
+    ratings.push_back(BatchSubmitRatingInput {
+        order_id: order_id,
+        rating: 500, // 5 stars
+        comment: String::from_str(&e, "Great product!"),
+    });
+
+    e.mock_all_auths();
+    let result = client.batch_submit_rating(&buyer, &ratings);
+    assert_eq!(result, ());
+
+    let product = client.get_product(&product_id);
+    assert_eq!(product.rating, 500);
+    assert_eq!(product.rating_count, 1);
+    
+    let seller_info = client.get_seller(&seller);
+    assert_eq!(seller_info.rating, 500);
+    assert_eq!(seller_info.rating_count, 1);
 }

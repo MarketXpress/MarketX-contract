@@ -4,6 +4,10 @@ mod errors;
 mod events;
 mod storage;
 mod types;
+mod batch;
+
+#[cfg(test)]
+mod test;
 
 use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
 
@@ -708,17 +712,17 @@ impl MarketX {
 
         let rate = if let Some(cat_id) = category_id {
             // Check for category-specific fee rate
-            if let Some(cat_rate) = get_category_fee_rate(e, cat_id) {
-                cat_rate
-            } else {
-                // Fall back to base rate if no category-specific rate
-                config.base_fee_rate
-            }
+             if let Some(category) = get_category(e, cat_id) {
+                 category.commission_rate
+             } else {
+                 config.base_fee_rate
+             }
         } else {
             config.base_fee_rate
         };
 
-        // Calculate fee: amount * rate / 10000
+        // Calculate fee: (amount * rate) / 10000
+        // Use u128 to prevent overflow before division
         let fee = amount
             .checked_mul(rate as u128)
             .ok_or(Error::FeeOverflow)?
@@ -726,6 +730,57 @@ impl MarketX {
             .ok_or(Error::FeeOverflow)?;
 
         Ok(fee)
+    }
+
+    // ========================================================================
+    // BATCH OPERATIONS
+    // ========================================================================
+
+    /// Batch add products
+    pub fn batch_add_product(
+        e: &Env,
+        seller: Address,
+        products: Vec<BatchCreateProductInput>,
+    ) -> Result<Vec<u64>, Error> {
+        batch::batch_add_product(e, seller, products)
+    }
+
+    /// Batch create orders
+    pub fn batch_create_order(
+        e: &Env,
+        buyer: Address,
+        token: Address,
+        orders: Vec<BatchCreateOrderInput>,
+    ) -> Result<Vec<u64>, Error> {
+        batch::batch_create_order(e, buyer, token, orders)
+    }
+
+    /// Batch update order status
+    pub fn batch_update_order_status(
+        e: &Env,
+        caller: Address,
+        updates: Vec<BatchUpdateStatusInput>,
+    ) -> Result<(), Error> {
+        batch::batch_update_order_status(e, caller, updates)
+    }
+
+    /// Batch release escrow
+    pub fn batch_release_escrow(
+        e: &Env,
+        caller: Address,
+        token: Address,
+        order_ids: Vec<u64>,
+    ) -> Result<(), Error> {
+        batch::batch_release_escrow(e, caller, token, order_ids)
+    }
+    
+    /// Batch submit rating
+    pub fn batch_submit_rating(
+        e: &Env,
+        caller: Address,
+        ratings: Vec<BatchSubmitRatingInput>,
+    ) -> Result<(), Error> {
+        batch::batch_submit_rating(e, caller, ratings)
     }
 
     /// Record a fee collection (admin only)

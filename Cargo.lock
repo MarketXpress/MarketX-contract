@@ -911,6 +911,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "marketx-contract"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk 23.4.1",
+]
+
+[[package]]
 name = "memchr"
 version = "2.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1405,6 +1412,39 @@ checksum = "ccd1e40963517b10963a8e404348d3fe6caf9c278ac47a6effd48771297374d6"
 dependencies = [
  "soroban-env-common 23.0.1",
  "static_assertions",
+]
+
+[[package]]
+name = "soroban-env-host"
+version = "21.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b7a32c28f281c423189f1298960194f0e0fc4eeb72378028171e556d8cd6160"
+dependencies = [
+ "backtrace",
+ "curve25519-dalek",
+ "ecdsa",
+ "ed25519-dalek",
+ "elliptic-curve",
+ "generic-array",
+ "getrandom",
+ "hex-literal",
+ "hmac",
+ "k256",
+ "num-derive",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand",
+ "rand_chacha",
+ "sec1",
+ "sha2",
+ "sha3",
+ "soroban-builtin-sdk-macros 21.2.1",
+ "soroban-env-common 21.2.1",
+ "soroban-wasmi",
+ "static_assertions",
+ "stellar-strkey 0.0.8",
+ "wasmparser",
 ]
 
 [[package]]

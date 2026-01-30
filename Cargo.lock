@@ -1435,6 +1435,39 @@ dependencies = [
 
 [[package]]
 name = "soroban-env-host"
+version = "21.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b7a32c28f281c423189f1298960194f0e0fc4eeb72378028171e556d8cd6160"
+dependencies = [
+ "backtrace",
+ "curve25519-dalek",
+ "ecdsa",
+ "ed25519-dalek",
+ "elliptic-curve",
+ "generic-array",
+ "getrandom",
+ "hex-literal",
+ "hmac",
+ "k256",
+ "num-derive",
+ "num-integer",
+ "num-traits",
+ "p256",
+ "rand",
+ "rand_chacha",
+ "sec1",
+ "sha2",
+ "sha3",
+ "soroban-builtin-sdk-macros 21.2.1",
+ "soroban-env-common 21.2.1",
+ "soroban-wasmi",
+ "static_assertions",
+ "stellar-strkey 0.0.8",
+ "wasmparser",
+]
+
+[[package]]
+name = "soroban-env-host"
 version = "23.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9766c5ad78e9d8ae10afbc076301f7d610c16407a1ebb230766dbe007a48725"

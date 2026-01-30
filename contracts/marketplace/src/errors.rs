@@ -46,4 +46,14 @@ pub enum Error {
     InvalidMetadata = 518,
     /// Seller is suspended
     SellerSuspended = 519,
+    /// Order not found
+    OrderNotFound = 520,
+    /// Invalid order status for operation
+    InvalidOrderStatus = 521,
+    /// Insufficient stock for order
+    InsufficientStock = 522,
+    /// Invalid payment amount
+    InvalidPaymentAmount = 523,
+    /// Batch operation failed
+    BatchOperationFailed = 524,
 }

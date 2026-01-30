@@ -116,3 +116,32 @@ pub struct QualityRatedEventData {
     #[topic]
     pub seller: Address,
 }
+
+/// Event emitted when an order is created
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrderCreatedEventData {
+    #[topic]
+    pub buyer: Address,
+    #[topic]
+    pub seller: Address,
+    pub order_id: u64,
+}
+
+/// Event emitted when order status is updated
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OrderStatusUpdatedEventData {
+    #[topic]
+    pub order_id: u64,
+    pub new_status: u32,
+}
+
+/// Event emitted when escrow is released
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowReleasedEventData {
+    #[topic]
+    pub order_id: u64,
+    pub amount: u128,
+}

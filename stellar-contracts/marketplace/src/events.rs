@@ -1,6 +1,5 @@
 use soroban_sdk::{contractevent, Address, String};
 
-/// Event emitted when marketplace is initialized
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitializedEventData {
@@ -9,7 +8,6 @@ pub struct InitializedEventData {
     pub base_fee_rate: u32,
 }
 
-/// Event emitted when a seller registers
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SellerRegisteredEventData {
@@ -17,7 +15,6 @@ pub struct SellerRegisteredEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a seller is verified
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SellerVerifiedEventData {
@@ -25,7 +22,6 @@ pub struct SellerVerifiedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a seller is suspended
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SellerSuspendedEventData {
@@ -33,7 +29,6 @@ pub struct SellerSuspendedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a seller is unsuspended
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SellerUnsuspendedEventData {
@@ -41,7 +36,6 @@ pub struct SellerUnsuspendedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a category is created
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CategoryCreatedEventData {
@@ -50,7 +44,6 @@ pub struct CategoryCreatedEventData {
     pub name: String,
 }
 
-/// Event emitted when a product is listed
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductListedEventData {
@@ -58,7 +51,6 @@ pub struct ProductListedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a product is updated
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductUpdatedEventData {
@@ -66,7 +58,6 @@ pub struct ProductUpdatedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when a product is delisted
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductDelistedEventData {
@@ -74,7 +65,6 @@ pub struct ProductDelistedEventData {
     pub seller: Address,
 }
 
-/// Event emitted when marketplace is paused/unpaused
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarketplacePausedEventData {
@@ -83,7 +73,6 @@ pub struct MarketplacePausedEventData {
     pub is_paused: bool,
 }
 
-/// Event emitted when fee rate is updated
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeRateUpdatedEventData {
@@ -92,7 +81,6 @@ pub struct FeeRateUpdatedEventData {
     pub new_rate: u32,
 }
 
-/// Event emitted when fees are collected
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeCollectedEventData {
@@ -100,7 +88,6 @@ pub struct FeeCollectedEventData {
     pub admin: Address,
 }
 
-/// Event emitted when seller rating is updated
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SellerRatingUpdatedEventData {
@@ -109,10 +96,37 @@ pub struct SellerRatingUpdatedEventData {
     pub new_rating: u32,
 }
 
-/// Product quality rating submitted
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QualityRatedEventData {
     #[topic]
     pub seller: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleConfiguredEventData {
+    #[topic]
+    pub admin: Address,
+    pub stellar_oracle: Address,
+    pub external_oracle: Address,
+    pub staleness_threshold: u64,
+    pub price_tolerance: u32,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleEnabledEventData {
+    #[topic]
+    pub admin: Address,
+    pub is_enabled: bool,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleAddressUpdateEventData {
+    #[topic]
+    pub admin: Address,
+    pub oracle_type: u32,
+    pub new_address: Address,
 }

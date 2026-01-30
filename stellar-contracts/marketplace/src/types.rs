@@ -1,45 +1,32 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, String, Symbol};
 
-/// Storage keys for the MarketX contract.
 #[contracttype]
 #[derive(Clone)]
 pub enum StorageKey {
-    /// Admin address for marketplace configuration
     Admin,
-    /// Initialization flag
     Initialized,
-    /// Marketplace configuration
     Config,
-    /// Seller data by address
     Seller(Address),
-    /// Product data by ID
     Product(u64),
-    /// Category data by ID
     Category(u32),
-    /// Product IDs by seller address
     SellerProducts(Address),
-    /// Product IDs by category
     CategoryProducts(u32),
-    /// Total fees collected
     FeesCollected,
-    /// Fee percentage by category
     CategoryFeeRate(u32),
-    /// Last product ID counter
     ProductCounter,
-    /// Seller verification queue
     VerificationQueue,
+    OracleConfig,
+    PriceHistory(Address),
+    ExternalPriceHistory(Symbol),
+    LastPriceUpdate,
 }
 
-/// Seller verification status
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum SellerStatus {
-    /// Pending verification
     Unverified = 0,
-    /// Seller is verified and can list products
     Verified = 1,
-    /// Seller account is suspended
     Suspended = 2,
 }
 
@@ -62,16 +49,12 @@ impl SellerStatus {
     }
 }
 
-/// Product listing status
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum ProductStatus {
-    /// Product is active and can be purchased
     Active = 0,
-    /// Product has been delisted by seller
     Delisted = 1,
-    /// Product is out of stock
     OutOfStock = 2,
 }
 
@@ -94,109 +77,112 @@ impl ProductStatus {
     }
 }
 
-/// Seller information and reputation
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Seller {
-    /// Seller's blockchain address
     pub address: Address,
-    /// Current verification status
     pub status: SellerStatus,
-    /// Seller's reputation rating (1-5 stars * 100)
     pub rating: u32,
-    /// Total sales count
     pub total_sales: u64,
-    /// Total revenue from sales
     pub total_revenue: u128,
-    /// Timestamp when seller registered
     pub created_at: u64,
-    /// Optional metadata (JSON encoded)
     pub metadata: String,
 }
 
-/// Product listing information
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Product {
-    /// Unique product identifier
     pub id: u64,
-    /// Seller's address
     pub seller: Address,
-    /// Product name
     pub name: String,
-    /// Product description
     pub description: String,
-    /// Category ID
     pub category_id: u32,
-    /// Price in stroops
     pub price: u128,
-    /// Current status
     pub status: ProductStatus,
-    /// Available quantity
     pub stock_quantity: u64,
-    /// Product rating (1-5 stars * 100)
     pub rating: u32,
-    /// Number of purchases
     pub purchase_count: u64,
-    /// Creation timestamp
     pub created_at: u64,
-    /// Optional metadata (JSON encoded)
     pub metadata: String,
 }
 
-/// Product category
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Category {
-    /// Unique category identifier
     pub id: u32,
-    /// Category name
     pub name: String,
-    /// Category description
     pub description: String,
-    /// Commission rate in basis points (100 = 1%)
     pub commission_rate: u32,
-    /// Whether category is active
     pub is_active: bool,
 }
 
-/// Marketplace configuration
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarketplaceConfig {
-    /// Admin address with special privileges
     pub admin: Address,
-    /// Base fee rate in basis points
     pub base_fee_rate: u32,
-    /// Whether marketplace is paused
     pub is_paused: bool,
-    /// Total number of products listed
     pub total_products: u64,
-    /// Total number of registered sellers
     pub total_sellers: u64,
-    /// Timestamp of last configuration update
     pub updated_at: u64,
 }
 
-/// Event record for tracking transactions
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransactionRecord {
-    /// Transaction type (purchase, fee, etc.)
     pub transaction_type: u32,
-    /// Amount involved
     pub amount: u128,
-    /// Timestamp
     pub timestamp: u64,
-    /// Associated product ID
     pub product_id: u64,
 }
 
-/// Number of ledgers in a day (assuming ~5 second block time)
 pub const DAY_IN_LEDGERS: u32 = 17280;
-
-/// TTL extension amount for persistent storage (90 days)
 pub const PERSISTENT_TTL_AMOUNT: u32 = 90 * DAY_IN_LEDGERS;
-
-/// TTL threshold for persistent storage
 pub const PERSISTENT_TTL_THRESHOLD: u32 = PERSISTENT_TTL_AMOUNT - DAY_IN_LEDGERS;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleConfig {
+    pub stellar_oracle: Address,
+    pub external_oracle: Address,
+    pub staleness_threshold: u64,
+    pub price_deviation_threshold: u32,
+    pub price_tolerance: u32,
+    pub update_frequency: u64,
+    pub is_enabled: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum PriceSource {
+    Oracle = 0,
+    Cached = 1,
+}
+
+impl PriceSource {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            PriceSource::Oracle => 0,
+            PriceSource::Cached => 1,
+        }
+    }
+
+    pub fn from_u32(value: u32) -> Option<PriceSource> {
+        match value {
+            0 => Some(PriceSource::Oracle),
+            1 => Some(PriceSource::Cached),
+            _ => None,
+        }
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceRecord {
+    pub price: i128,
+    pub timestamp: u64,
+    pub source: PriceSource,
+}
+
+pub const MAX_PRICE_RECORDS: u32 = 100;

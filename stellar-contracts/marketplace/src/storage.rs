@@ -1,15 +1,10 @@
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 use crate::types::{
-    Category, MarketplaceConfig, Product, Seller, StorageKey,
-    PERSISTENT_TTL_AMOUNT, PERSISTENT_TTL_THRESHOLD,
+    Category, MarketplaceConfig, OracleConfig, PriceRecord, Product, Seller, StorageKey,
+    MAX_PRICE_RECORDS, PERSISTENT_TTL_AMOUNT, PERSISTENT_TTL_THRESHOLD,
 };
 
-// ============================================================================
-// INITIALIZATION STORAGE
-// ============================================================================
-
-/// Check if contract is initialized
 pub fn is_initialized(e: &Env) -> bool {
     e.storage()
         .instance()
@@ -17,18 +12,12 @@ pub fn is_initialized(e: &Env) -> bool {
         .unwrap_or(false)
 }
 
-/// Mark contract as initialized
 pub fn set_initialized(e: &Env) {
     e.storage()
         .instance()
         .set(&StorageKey::Initialized, &true);
 }
 
-// ============================================================================
-// CONFIG STORAGE
-// ============================================================================
-
-/// Get marketplace configuration
 pub fn get_config(e: &Env) -> Option<MarketplaceConfig> {
     let key = StorageKey::Config;
     let config = e.storage().persistent().get::<_, MarketplaceConfig>(&key);
@@ -40,7 +29,6 @@ pub fn get_config(e: &Env) -> Option<MarketplaceConfig> {
     config
 }
 
-/// Set marketplace configuration
 pub fn set_config(e: &Env, config: &MarketplaceConfig) {
     let key = StorageKey::Config;
     e.storage().persistent().set(&key, config);
@@ -49,11 +37,6 @@ pub fn set_config(e: &Env, config: &MarketplaceConfig) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// SELLER STORAGE
-// ============================================================================
-
-/// Get seller information by address
 pub fn get_seller(e: &Env, seller_address: &Address) -> Option<Seller> {
     let key = StorageKey::Seller(seller_address.clone());
     let seller = e.storage().persistent().get::<_, Seller>(&key);
@@ -65,7 +48,6 @@ pub fn get_seller(e: &Env, seller_address: &Address) -> Option<Seller> {
     seller
 }
 
-/// Set seller information
 pub fn set_seller(e: &Env, seller: &Seller) {
     let key = StorageKey::Seller(seller.address.clone());
     e.storage().persistent().set(&key, seller);
@@ -74,17 +56,11 @@ pub fn set_seller(e: &Env, seller: &Seller) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-/// Check if seller exists
 pub fn seller_exists(e: &Env, seller_address: &Address) -> bool {
     let key = StorageKey::Seller(seller_address.clone());
     e.storage().persistent().has(&key)
 }
 
-// ============================================================================
-// PRODUCT STORAGE
-// ============================================================================
-
-/// Get product information by ID
 pub fn get_product(e: &Env, product_id: u64) -> Option<Product> {
     let key = StorageKey::Product(product_id);
     let product = e.storage().persistent().get::<_, Product>(&key);
@@ -96,7 +72,6 @@ pub fn get_product(e: &Env, product_id: u64) -> Option<Product> {
     product
 }
 
-/// Set product information
 pub fn set_product(e: &Env, product: &Product) {
     let key = StorageKey::Product(product.id);
     e.storage().persistent().set(&key, product);
@@ -105,11 +80,6 @@ pub fn set_product(e: &Env, product: &Product) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// CATEGORY STORAGE
-// ============================================================================
-
-/// Get category information by ID
 pub fn get_category(e: &Env, category_id: u32) -> Option<Category> {
     let key = StorageKey::Category(category_id);
     let category = e.storage().persistent().get::<_, Category>(&key);
@@ -121,7 +91,6 @@ pub fn get_category(e: &Env, category_id: u32) -> Option<Category> {
     category
 }
 
-/// Set category information
 pub fn set_category(e: &Env, category: &Category) {
     let key = StorageKey::Category(category.id);
     e.storage().persistent().set(&key, category);
@@ -130,17 +99,11 @@ pub fn set_category(e: &Env, category: &Category) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-/// Check if category exists
 pub fn category_exists(e: &Env, category_id: u32) -> bool {
     let key = StorageKey::Category(category_id);
     e.storage().persistent().has(&key)
 }
 
-// ============================================================================
-// SELLER PRODUCTS STORAGE
-// ============================================================================
-
-/// Get all product IDs for a seller
 pub fn get_seller_products(e: &Env, seller_address: &Address) -> Vec<u64> {
     let key = StorageKey::SellerProducts(seller_address.clone());
     let products = e
@@ -156,7 +119,6 @@ pub fn get_seller_products(e: &Env, seller_address: &Address) -> Vec<u64> {
     products
 }
 
-/// Add product to seller's product list
 pub fn add_seller_product(e: &Env, seller_address: &Address, product_id: u64) {
     let key = StorageKey::SellerProducts(seller_address.clone());
     let mut products = get_seller_products(e, seller_address);
@@ -167,11 +129,6 @@ pub fn add_seller_product(e: &Env, seller_address: &Address, product_id: u64) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// CATEGORY PRODUCTS STORAGE
-// ============================================================================
-
-/// Get all product IDs for a category
 pub fn get_category_products(e: &Env, category_id: u32) -> Vec<u64> {
     let key = StorageKey::CategoryProducts(category_id);
     let products = e
@@ -187,7 +144,6 @@ pub fn get_category_products(e: &Env, category_id: u32) -> Vec<u64> {
     products
 }
 
-/// Add product to category's product list
 pub fn add_category_product(e: &Env, category_id: u32, product_id: u64) {
     let key = StorageKey::CategoryProducts(category_id);
     let mut products = get_category_products(e, category_id);
@@ -198,11 +154,6 @@ pub fn add_category_product(e: &Env, category_id: u32, product_id: u64) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// FEES STORAGE
-// ============================================================================
-
-/// Get total collected fees
 pub fn get_total_fees(e: &Env) -> u128 {
     let key = StorageKey::FeesCollected;
     let fees = e.storage().persistent().get::<_, u128>(&key).unwrap_or(0);
@@ -214,22 +165,16 @@ pub fn get_total_fees(e: &Env) -> u128 {
     fees
 }
 
-/// Add to total collected fees
 pub fn add_fees(e: &Env, amount: u128) {
     let key = StorageKey::FeesCollected;
     let mut fees = get_total_fees(e);
-    fees = fees.checked_add(amount).unwrap_or(u128::MAX);
+    fees = fees.saturating_add(amount);
     e.storage().persistent().set(&key, &fees);
     e.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// PRODUCT COUNTER STORAGE
-// ============================================================================
-
-/// Get next product ID
 pub fn get_next_product_id(e: &Env) -> u64 {
     let key = StorageKey::ProductCounter;
     let counter = e.storage().persistent().get::<_, u64>(&key).unwrap_or(0);
@@ -241,7 +186,6 @@ pub fn get_next_product_id(e: &Env) -> u64 {
     counter + 1
 }
 
-/// Increment product counter
 pub fn increment_product_counter(e: &Env) {
     let key = StorageKey::ProductCounter;
     let counter = get_next_product_id(e);
@@ -251,11 +195,6 @@ pub fn increment_product_counter(e: &Env) {
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
 }
 
-// ============================================================================
-// CATEGORY FEE RATE STORAGE
-// ============================================================================
-
-/// Get fee rate for a specific category
 pub fn get_category_fee_rate(e: &Env, category_id: u32) -> Option<u32> {
     let key = StorageKey::CategoryFeeRate(category_id);
     let rate = e.storage().persistent().get::<_, u32>(&key);
@@ -267,10 +206,115 @@ pub fn get_category_fee_rate(e: &Env, category_id: u32) -> Option<u32> {
     rate
 }
 
-/// Set fee rate for a specific category
 pub fn set_category_fee_rate(e: &Env, category_id: u32, rate: u32) {
     let key = StorageKey::CategoryFeeRate(category_id);
     e.storage().persistent().set(&key, &rate);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+pub fn get_oracle_config(e: &Env) -> Option<OracleConfig> {
+    let key = StorageKey::OracleConfig;
+    let config = e.storage().persistent().get::<_, OracleConfig>(&key);
+    if config.is_some() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    config
+}
+
+pub fn set_oracle_config(e: &Env, config: &OracleConfig) {
+    let key = StorageKey::OracleConfig;
+    e.storage().persistent().set(&key, config);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+pub fn get_price_history(e: &Env, asset_address: &Address) -> Vec<PriceRecord> {
+    let key = StorageKey::PriceHistory(asset_address.clone());
+    let history = e
+        .storage()
+        .persistent()
+        .get::<_, Vec<PriceRecord>>(&key)
+        .unwrap_or(Vec::new(e));
+    if !history.is_empty() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    history
+}
+
+pub fn add_price_record(e: &Env, asset_address: &Address, record: &PriceRecord) {
+    let key = StorageKey::PriceHistory(asset_address.clone());
+    let mut history = get_price_history(e, asset_address);
+
+    if history.len() >= MAX_PRICE_RECORDS {
+        let mut new_history = Vec::new(e);
+        for i in 1..history.len() {
+            new_history.push_back(history.get(i).unwrap());
+        }
+        history = new_history;
+    }
+
+    history.push_back(record.clone());
+    e.storage().persistent().set(&key, &history);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+pub fn get_external_price_history(e: &Env, symbol: &Symbol) -> Vec<PriceRecord> {
+    let key = StorageKey::ExternalPriceHistory(symbol.clone());
+    let history = e
+        .storage()
+        .persistent()
+        .get::<_, Vec<PriceRecord>>(&key)
+        .unwrap_or(Vec::new(e));
+    if !history.is_empty() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    history
+}
+
+pub fn add_external_price_record(e: &Env, symbol: &Symbol, record: &PriceRecord) {
+    let key = StorageKey::ExternalPriceHistory(symbol.clone());
+    let mut history = get_external_price_history(e, symbol);
+
+    if history.len() >= MAX_PRICE_RECORDS {
+        let mut new_history = Vec::new(e);
+        for i in 1..history.len() {
+            new_history.push_back(history.get(i).unwrap());
+        }
+        history = new_history;
+    }
+
+    history.push_back(record.clone());
+    e.storage().persistent().set(&key, &history);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+pub fn get_last_price_update(e: &Env) -> u64 {
+    let key = StorageKey::LastPriceUpdate;
+    let timestamp = e.storage().persistent().get::<_, u64>(&key).unwrap_or(0);
+    if timestamp > 0 {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    timestamp
+}
+
+pub fn set_last_price_update(e: &Env, timestamp: u64) {
+    let key = StorageKey::LastPriceUpdate;
+    e.storage().persistent().set(&key, &timestamp);
     e.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);

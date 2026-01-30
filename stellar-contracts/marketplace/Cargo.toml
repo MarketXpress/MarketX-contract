@@ -11,6 +11,7 @@ doctest = false
 soroban-sdk = { workspace = true }
 
 [dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
 
 [profile.release]
 opt-level = "z"

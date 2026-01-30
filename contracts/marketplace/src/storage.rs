@@ -1,7 +1,7 @@
 use soroban_sdk::{Address, Env, Vec};
 
 use crate::types::{
-    Category, MarketplaceConfig, Product, Seller, StorageKey,
+    Category, MarketplaceConfig, Order, OrderStatus, Product, Seller, StorageKey,
     PERSISTENT_TTL_AMOUNT, PERSISTENT_TTL_THRESHOLD,
 };
 
@@ -271,6 +271,107 @@ pub fn get_category_fee_rate(e: &Env, category_id: u32) -> Option<u32> {
 pub fn set_category_fee_rate(e: &Env, category_id: u32, rate: u32) {
     let key = StorageKey::CategoryFeeRate(category_id);
     e.storage().persistent().set(&key, &rate);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+// ============================================================================
+// ORDER STORAGE
+// ============================================================================
+
+/// Get order information by ID
+pub fn get_order(e: &Env, order_id: u64) -> Option<Order> {
+    let key = StorageKey::Order(order_id);
+    let order = e.storage().persistent().get::<_, Order>(&key);
+    if order.is_some() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    order
+}
+
+/// Set order information
+pub fn set_order(e: &Env, order: &Order) {
+    let key = StorageKey::Order(order.id);
+    e.storage().persistent().set(&key, order);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+/// Get next order ID
+pub fn get_next_order_id(e: &Env) -> u64 {
+    let key = StorageKey::OrderCounter;
+    let counter = e.storage().persistent().get::<_, u64>(&key).unwrap_or(0);
+    if counter > 0 {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    counter + 1
+}
+
+/// Increment order counter
+pub fn increment_order_counter(e: &Env) {
+    let key = StorageKey::OrderCounter;
+    let counter = get_next_order_id(e);
+    e.storage().persistent().set(&key, &counter);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+/// Get all order IDs for a buyer
+pub fn get_buyer_orders(e: &Env, buyer: &Address) -> Vec<u64> {
+    let key = StorageKey::BuyerOrders(buyer.clone());
+    let orders = e
+        .storage()
+        .persistent()
+        .get::<_, Vec<u64>>(&key)
+        .unwrap_or(Vec::new(e));
+    if !orders.is_empty() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    orders
+}
+
+/// Add order to buyer's list
+pub fn add_buyer_order(e: &Env, buyer: &Address, order_id: u64) {
+    let key = StorageKey::BuyerOrders(buyer.clone());
+    let mut orders = get_buyer_orders(e, buyer);
+    orders.push_back(order_id);
+    e.storage().persistent().set(&key, &orders);
+    e.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+}
+
+/// Get all order IDs for a seller
+pub fn get_seller_orders(e: &Env, seller: &Address) -> Vec<u64> {
+    let key = StorageKey::SellerOrders(seller.clone());
+    let orders = e
+        .storage()
+        .persistent()
+        .get::<_, Vec<u64>>(&key)
+        .unwrap_or(Vec::new(e));
+    if !orders.is_empty() {
+        e.storage()
+            .persistent()
+            .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);
+    }
+    orders
+}
+
+/// Add order to seller's list
+pub fn add_seller_order(e: &Env, seller: &Address, order_id: u64) {
+    let key = StorageKey::SellerOrders(seller.clone());
+    let mut orders = get_seller_orders(e, seller);
+    orders.push_back(order_id);
+    e.storage().persistent().set(&key, &orders);
     e.storage()
         .persistent()
         .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_AMOUNT);

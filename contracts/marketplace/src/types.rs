@@ -94,6 +94,54 @@ impl ProductStatus {
     }
 }
 
+/// Order status
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum OrderStatus {
+    /// Order placed but not paid
+    Pending = 0,
+    /// Payment received
+    Paid = 1,
+    /// Seller has shipped
+    Shipped = 2,
+    /// Buyer received (or auto-confirmed)
+    Delivered = 3,
+    /// Order completed and escrow released
+    Completed = 4,
+    /// Order cancelled/refunded
+    Cancelled = 5,
+    /// Order disputed
+    Disputed = 6,
+}
+
+impl OrderStatus {
+    pub fn as_u32(&self) -> u32 {
+        match self {
+            OrderStatus::Pending => 0,
+            OrderStatus::Paid => 1,
+            OrderStatus::Shipped => 2,
+            OrderStatus::Delivered => 3,
+            OrderStatus::Completed => 4,
+            OrderStatus::Cancelled => 5,
+            OrderStatus::Disputed => 6,
+        }
+    }
+
+    pub fn from_u32(value: u32) -> Option<OrderStatus> {
+        match value {
+            0 => Some(OrderStatus::Pending),
+            1 => Some(OrderStatus::Paid),
+            2 => Some(OrderStatus::Shipped),
+            3 => Some(OrderStatus::Delivered),
+            4 => Some(OrderStatus::Completed),
+            5 => Some(OrderStatus::Cancelled),
+            6 => Some(OrderStatus::Disputed),
+            _ => None,
+        }
+    }
+}
+
 /// Seller information and reputation
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -142,6 +190,69 @@ pub struct Product {
     pub created_at: u64,
     /// Optional metadata (JSON encoded)
     pub metadata: String,
+}
+
+/// Order information
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Order {
+    /// Unique order identifier
+    pub id: u64,
+    /// Buyer's address
+    pub buyer: Address,
+    /// Seller's address
+    pub seller: Address,
+    /// Product ID
+    pub product_id: u64,
+    /// Quantity ordered
+    pub quantity: u64,
+    /// Total price (quantity * unit price)
+    pub total_price: u128,
+    /// Current status
+    pub status: OrderStatus,
+    /// Timestamp created
+    pub created_at: u64,
+    /// Timestamp last updated
+    pub updated_at: u64,
+    /// Escrow balance (funds held)
+    pub escrow_balance: u128,
+}
+
+/// Batch input for creating products
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchCreateProductInput {
+    pub name: String,
+    pub description: String,
+    pub category_id: u32,
+    pub price: u128,
+    pub stock_quantity: u64,
+    pub metadata: String,
+}
+
+/// Batch input for creating orders
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchCreateOrderInput {
+    pub product_id: u64,
+    pub quantity: u64,
+}
+
+/// Batch input for updating order status
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchUpdateStatusInput {
+    pub order_id: u64,
+    pub new_status: u32,
+}
+
+/// Batch input for submitting ratings
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchSubmitRatingInput {
+    pub order_id: u64,
+    pub rating: u32,
+    pub comment: String,
 }
 
 /// Product category

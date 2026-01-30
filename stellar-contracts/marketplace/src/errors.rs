@@ -46,4 +46,25 @@ pub enum Error {
     InvalidMetadata = 518,
     /// Seller is suspended
     SellerSuspended = 519,
+
+    // ========================================================================
+    // ORACLE ERRORS (520-529)
+    // ========================================================================
+
+    /// Oracle has not been configured
+    OracleNotConfigured = 520,
+    /// Oracle price is stale (too old)
+    OraclePriceStale = 521,
+    /// Oracle price is not available
+    OraclePriceUnavailable = 522,
+    /// Potential price manipulation detected
+    OraclePriceManipulated = 523,
+    /// Price update attempted too frequently
+    OracleUpdateTooFrequent = 524,
+    /// Invalid oracle address provided
+    InvalidOracleAddress = 525,
+    /// Product price deviates too much from oracle price
+    PriceOutOfRange = 526,
+    /// Payment asset is not supported by the oracle
+    PaymentAssetNotSupported = 527,
 }

@@ -2,13 +2,16 @@
 
 mod errors;
 mod events;
+mod oracle;
+mod reflector;
 mod storage;
 mod types;
 
-use soroban_sdk::{contract, contractimpl, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, String, Symbol, Vec};
 
 use crate::errors::Error;
 use crate::events::*;
+use crate::oracle::OracleService;
 use crate::storage::*;
 use crate::types::*;
 
@@ -411,9 +414,15 @@ impl MarketX {
     /// * `price` - Price in stroops
     /// * `stock_quantity` - Available quantity
     /// * `metadata` - Optional JSON metadata
+    /// * `payment_asset` - Optional payment asset address for oracle price validation
     ///
     /// # Returns
     /// * Product ID if successful
+    ///
+    /// # Price Validation
+    /// If oracle is configured and enabled, the product price will be validated
+    /// against the oracle reference price. The price must be within the configured
+    /// tolerance (e.g., 20%) of the oracle price.
     pub fn add_product(
         e: &Env,
         seller: Address,
@@ -490,6 +499,117 @@ impl MarketX {
         Ok(product_id)
     }
 
+    /// Add a new product with oracle price validation (verified sellers only)
+    ///
+    /// # Arguments
+    /// * `seller` - Seller address listing the product
+    /// * `name` - Product name
+    /// * `description` - Product description
+    /// * `category_id` - Category ID
+    /// * `price` - Price in the payment asset
+    /// * `stock_quantity` - Available quantity
+    /// * `metadata` - Optional JSON metadata
+    /// * `payment_asset` - Payment asset address for oracle price validation
+    ///
+    /// # Returns
+    /// * Product ID if successful
+    ///
+    /// # Errors
+    /// * `Error::PriceOutOfRange` - If price deviates more than tolerance from oracle
+    /// * `Error::PaymentAssetNotSupported` - If payment asset is not tracked by oracle
+    pub fn add_product_with_validation(
+        e: &Env,
+        seller: Address,
+        name: String,
+        description: String,
+        category_id: u32,
+        price: u128,
+        stock_quantity: u64,
+        metadata: String,
+        payment_asset: Address,
+    ) -> Result<u64, Error> {
+        seller.require_auth();
+
+        let config = get_config(e).ok_or(Error::NotInitialized)?;
+
+        if config.is_paused {
+            return Err(Error::MarketplacePaused);
+        }
+
+        // Verify seller exists and is verified
+        let seller_data = get_seller(e, &seller).ok_or(Error::SellerNotFound)?;
+
+        if seller_data.status != SellerStatus::Verified {
+            return Err(Error::SellerNotVerified);
+        }
+
+        if seller_data.status == SellerStatus::Suspended {
+            return Err(Error::SellerSuspended);
+        }
+
+        // Verify category exists
+        let _category = get_category(e, category_id).ok_or(Error::CategoryNotFound)?;
+
+        if name.is_empty() || description.is_empty() {
+            return Err(Error::InvalidMetadata);
+        }
+
+        if price == 0 || stock_quantity == 0 {
+            return Err(Error::InvalidInput);
+        }
+
+        // Validate price against oracle if configured
+        if let Some(oracle_config) = get_oracle_config(e) {
+            if oracle_config.is_enabled {
+                // Validate that the payment asset is supported
+                OracleService::validate_payment_asset(e, &payment_asset)?;
+
+                // Get oracle price and validate product price
+                let price_data = OracleService::get_stellar_asset_price(e, &payment_asset)?;
+                OracleService::validate_product_price(
+                    price_data.price,
+                    price,
+                    oracle_config.price_tolerance,
+                )?;
+            }
+        }
+
+        let product_id = get_next_product_id(e);
+
+        let product = Product {
+            id: product_id,
+            seller: seller.clone(),
+            name,
+            description,
+            category_id,
+            price,
+            status: ProductStatus::Active,
+            stock_quantity,
+            rating: 0,
+            purchase_count: 0,
+            created_at: e.ledger().timestamp(),
+            metadata,
+        };
+
+        set_product(e, &product);
+        add_seller_product(e, &seller, product_id);
+        add_category_product(e, category_id, product_id);
+        increment_product_counter(e);
+
+        let mut updated_config = config;
+        updated_config.total_products += 1;
+        updated_config.updated_at = e.ledger().timestamp();
+        set_config(e, &updated_config);
+
+        ProductListedEventData {
+            seller: seller.clone(),
+        }
+        .publish(e);
+
+        Self::extend_instance_ttl(e);
+        Ok(product_id)
+    }
+
     /// Get product information
     pub fn get_product(e: &Env, product_id: u64) -> Result<Product, Error> {
         get_product(e, product_id).ok_or(Error::ProductNotFound)
@@ -522,6 +642,83 @@ impl MarketX {
         let mut updated = false;
 
         if price > 0 && price != product.price {
+            product.price = price;
+            updated = true;
+        }
+
+        if stock_quantity > 0 && stock_quantity != product.stock_quantity {
+            product.stock_quantity = stock_quantity;
+            updated = true;
+        }
+
+        if status <= 2 && (status as u32) != product.status.as_u32() {
+            product.status = match status {
+                0 => ProductStatus::Active,
+                1 => ProductStatus::Delisted,
+                2 => ProductStatus::OutOfStock,
+                _ => return Err(Error::InvalidProductStatus),
+            };
+            updated = true;
+        }
+
+        if !updated {
+            return Err(Error::InvalidInput);
+        }
+
+        set_product(e, &product);
+
+        ProductUpdatedEventData {
+            seller: seller.clone(),
+        }
+        .publish(e);
+
+        Self::extend_instance_ttl(e);
+        Ok(())
+    }
+
+    /// Update product with oracle price validation (seller only)
+    ///
+    /// # Arguments
+    /// * `seller` - Seller address (must be product owner)
+    /// * `product_id` - Product to update
+    /// * `price` - New price (pass 0 to keep current)
+    /// * `stock_quantity` - New stock (pass 0 to keep current)
+    /// * `status` - New status (0=Active, 1=Delisted, 2=OutOfStock)
+    /// * `payment_asset` - Payment asset address for oracle price validation
+    ///
+    /// # Errors
+    /// * `Error::PriceOutOfRange` - If new price deviates more than tolerance from oracle
+    pub fn update_product_with_validation(
+        e: &Env,
+        seller: Address,
+        product_id: u64,
+        price: u128,
+        stock_quantity: u64,
+        status: u32,
+        payment_asset: Address,
+    ) -> Result<(), Error> {
+        seller.require_auth();
+
+        let mut product = get_product(e, product_id).ok_or(Error::ProductNotFound)?;
+
+        if seller != product.seller {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut updated = false;
+
+        if price > 0 && price != product.price {
+            // Validate new price against oracle if configured
+            if let Some(oracle_config) = get_oracle_config(e) {
+                if oracle_config.is_enabled {
+                    let price_data = OracleService::get_stellar_asset_price(e, &payment_asset)?;
+                    OracleService::validate_product_price(
+                        price_data.price,
+                        price,
+                        oracle_config.price_tolerance,
+                    )?;
+                }
+            }
             product.price = price;
             updated = true;
         }
@@ -707,11 +904,14 @@ impl MarketX {
         let config = get_config(e).ok_or(Error::NotInitialized)?;
 
         let rate = if let Some(cat_id) = category_id {
-            // Check for category-specific fee rate
+            // Check for category-specific fee rate override first
             if let Some(cat_rate) = get_category_fee_rate(e, cat_id) {
                 cat_rate
+            } else if let Some(category) = get_category(e, cat_id) {
+                // Fall back to category's commission_rate
+                category.commission_rate
             } else {
-                // Fall back to base rate if no category-specific rate
+                // Fall back to base rate if category not found
                 config.base_fee_rate
             }
         } else {
@@ -797,6 +997,269 @@ impl MarketX {
     }
 
     // ========================================================================
+    // ORACLE CONFIGURATION (Admin Functions)
+    // ========================================================================
+
+    /// Configure the oracle for price feeds (admin only)
+    ///
+    /// # Arguments
+    /// * `admin` - Admin address
+    /// * `stellar_oracle` - Address of the Stellar Pubnet oracle for on-chain assets
+    /// * `external_oracle` - Address of the external oracle for BTC, ETH, etc.
+    /// * `staleness_threshold` - Max age of price in seconds (e.g., 300 = 5 min)
+    /// * `deviation_threshold` - Max % deviation from TWAP before manipulation alert (e.g., 1000 = 10%)
+    /// * `price_tolerance` - Max % product prices can deviate from oracle (e.g., 2000 = 20%)
+    /// * `update_frequency` - Min time between price updates in seconds
+    pub fn configure_oracle(
+        e: &Env,
+        admin: Address,
+        stellar_oracle: Address,
+        external_oracle: Address,
+        staleness_threshold: u64,
+        deviation_threshold: u32,
+        price_tolerance: u32,
+        update_frequency: u64,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+
+        let config = get_config(e).ok_or(Error::NotInitialized)?;
+
+        if admin != config.admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let oracle_config = OracleConfig {
+            stellar_oracle: stellar_oracle.clone(),
+            external_oracle: external_oracle.clone(),
+            staleness_threshold,
+            price_deviation_threshold: deviation_threshold,
+            price_tolerance,
+            update_frequency,
+            is_enabled: true,
+        };
+
+        set_oracle_config(e, &oracle_config);
+
+        OracleConfiguredEventData {
+            admin: admin.clone(),
+            stellar_oracle,
+            external_oracle,
+            staleness_threshold,
+            price_tolerance,
+        }
+        .publish(e);
+
+        Self::extend_instance_ttl(e);
+        Ok(())
+    }
+
+    /// Enable or disable the oracle (admin only)
+    pub fn set_oracle_enabled(e: &Env, admin: Address, enabled: bool) -> Result<(), Error> {
+        admin.require_auth();
+
+        let config = get_config(e).ok_or(Error::NotInitialized)?;
+
+        if admin != config.admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut oracle_config = get_oracle_config(e).ok_or(Error::OracleNotConfigured)?;
+        oracle_config.is_enabled = enabled;
+        set_oracle_config(e, &oracle_config);
+
+        OracleEnabledEventData {
+            admin: admin.clone(),
+            is_enabled: enabled,
+        }
+        .publish(e);
+
+        Self::extend_instance_ttl(e);
+        Ok(())
+    }
+
+    /// Update a specific oracle address (admin only)
+    ///
+    /// # Arguments
+    /// * `oracle_type` - 0 for Stellar oracle, 1 for External oracle
+    /// * `new_address` - New oracle address
+    pub fn update_oracle_address(
+        e: &Env,
+        admin: Address,
+        oracle_type: u32,
+        new_address: Address,
+    ) -> Result<(), Error> {
+        admin.require_auth();
+
+        let config = get_config(e).ok_or(Error::NotInitialized)?;
+
+        if admin != config.admin {
+            return Err(Error::Unauthorized);
+        }
+
+        let mut oracle_config = get_oracle_config(e).ok_or(Error::OracleNotConfigured)?;
+
+        match oracle_type {
+            0 => oracle_config.stellar_oracle = new_address.clone(),
+            1 => oracle_config.external_oracle = new_address.clone(),
+            _ => return Err(Error::InvalidInput),
+        }
+
+        set_oracle_config(e, &oracle_config);
+
+        OracleAddressUpdateEventData {
+            admin: admin.clone(),
+            oracle_type,
+            new_address,
+        }
+        .publish(e);
+
+        Self::extend_instance_ttl(e);
+        Ok(())
+    }
+
+    /// Get current oracle configuration
+    pub fn get_oracle_config(e: &Env) -> Result<OracleConfig, Error> {
+        get_oracle_config(e).ok_or(Error::OracleNotConfigured)
+    }
+
+    // ========================================================================
+    // ORACLE PRICE QUERY FUNCTIONS
+    // ========================================================================
+
+    /// Get the current price for a Stellar asset (XLM, USDC, etc.)
+    ///
+    /// # Arguments
+    /// * `asset_address` - Address of the Stellar token
+    ///
+    /// # Returns
+    /// * Tuple of (price, timestamp)
+    pub fn get_stellar_asset_price(
+        e: &Env,
+        asset_address: Address,
+    ) -> Result<(i128, u64), Error> {
+        let price_data = OracleService::get_stellar_asset_price(e, &asset_address)?;
+        Ok((price_data.price, price_data.timestamp))
+    }
+
+    /// Get the current price for an external asset (BTC, ETH, etc.)
+    ///
+    /// # Arguments
+    /// * `symbol` - Symbol of the external asset (e.g., "BTC", "ETH")
+    ///
+    /// # Returns
+    /// * Tuple of (price, timestamp)
+    pub fn get_external_asset_price(
+        e: &Env,
+        symbol: Symbol,
+    ) -> Result<(i128, u64), Error> {
+        let price_data = OracleService::get_external_asset_price(e, &symbol)?;
+        Ok((price_data.price, price_data.timestamp))
+    }
+
+    /// Get the time-weighted average price for a Stellar asset
+    ///
+    /// # Arguments
+    /// * `asset_address` - Address of the Stellar token
+    /// * `records` - Number of records to use for TWAP calculation
+    ///
+    /// # Returns
+    /// * TWAP price
+    pub fn get_asset_twap(
+        e: &Env,
+        asset_address: Address,
+        records: u32,
+    ) -> Result<i128, Error> {
+        OracleService::get_stellar_asset_twap(e, &asset_address, records)
+    }
+
+    /// Convert an amount from one asset to another
+    ///
+    /// # Arguments
+    /// * `amount` - Amount to convert
+    /// * `from_asset` - Source asset address
+    /// * `to_asset` - Target asset address
+    ///
+    /// # Returns
+    /// * Converted amount
+    pub fn convert_price(
+        e: &Env,
+        amount: i128,
+        from_asset: Address,
+        to_asset: Address,
+    ) -> Result<i128, Error> {
+        OracleService::convert_price(e, amount, &from_asset, &to_asset)
+    }
+
+    /// Get historical prices for an asset
+    ///
+    /// # Arguments
+    /// * `asset_address` - Address of the asset
+    /// * `limit` - Maximum number of records to return
+    ///
+    /// # Returns
+    /// * Vector of (price, timestamp) tuples
+    pub fn get_price_history(
+        e: &Env,
+        asset_address: Address,
+        limit: u32,
+    ) -> Result<Vec<(i128, u64)>, Error> {
+        let history = crate::storage::get_price_history(e, &asset_address);
+        let mut result: Vec<(i128, u64)> = Vec::new(e);
+
+        let len = history.len();
+        let count = core::cmp::min(limit, len);
+        let start_idx = len.saturating_sub(count);
+
+        for i in start_idx..len {
+            let record = history.get(i).unwrap();
+            result.push_back((record.price, record.timestamp));
+        }
+
+        Ok(result)
+    }
+
+    /// Get oracle status and last update time
+    ///
+    /// # Returns
+    /// * Tuple of (is_enabled, last_update_timestamp)
+    pub fn get_oracle_info(e: &Env) -> Result<(bool, u64), Error> {
+        let (config, last_update) = OracleService::get_oracle_info(e)?;
+        Ok((config.is_enabled, last_update))
+    }
+
+    // ========================================================================
+    // ORACLE VALIDATION FUNCTIONS
+    // ========================================================================
+
+    /// Validate that a proposed price is within acceptable range of oracle price
+    ///
+    /// # Arguments
+    /// * `asset_address` - Address of the payment asset
+    /// * `proposed_price` - Proposed product price
+    ///
+    /// # Returns
+    /// * Ok(()) if valid, Err(PriceOutOfRange) if not
+    pub fn validate_price(
+        e: &Env,
+        asset_address: Address,
+        proposed_price: u128,
+    ) -> Result<(), Error> {
+        let oracle_config = get_oracle_config(e).ok_or(Error::OracleNotConfigured)?;
+
+        if !oracle_config.is_enabled {
+            // If oracle is disabled, skip validation
+            return Ok(());
+        }
+
+        let price_data = OracleService::get_stellar_asset_price(e, &asset_address)?;
+        OracleService::validate_product_price(
+            price_data.price,
+            proposed_price,
+            oracle_config.price_tolerance,
+        )
+    }
+
+    // ========================================================================
     // INTERNAL HELPERS
     // ========================================================================
 
@@ -808,3 +1271,6 @@ impl MarketX {
             .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_AMOUNT);
     }
 }
+
+#[cfg(test)]
+mod test;

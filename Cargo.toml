@@ -1,8 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-  "contracts/*",
+  "contracts/auction",
+  "contracts/hello-world",
+  "contracts/marketplace",
 ]
+
+[workspace.package]
+name = "marketx-contract"
+version = "0.1.0"
+edition = "2021"
 
 [workspace.dependencies]
 soroban-sdk = "23"

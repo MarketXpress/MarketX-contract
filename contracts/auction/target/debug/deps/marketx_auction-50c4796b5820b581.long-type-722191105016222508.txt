@@ -1,1 +1,0 @@
-core::result::Result<core::result::Result<Auction, soroban_sdk::ConversionError>, core::result::Result<Error, InvokeError>>

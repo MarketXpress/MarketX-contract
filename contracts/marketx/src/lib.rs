@@ -26,6 +26,20 @@ impl Contract {
             .unwrap()
     }
 
+    /// Safely retrieve an escrow record by ID, returning a Result.
+    ///
+    /// Returns the Escrow struct data if found, or EscrowNotFound error otherwise.
+    /// This is the recommended method for safer error handling.
+    ///
+    /// Errors:
+    /// - `ContractError::EscrowNotFound` — no escrow exists for the given ID
+    pub fn try_get_escrow(env: Env, escrow_id: u64) -> Result<Escrow, ContractError> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)
+    }
+
     /// Transition an escrow to a new status, enforcing the valid state graph.
     ///
     /// Errors:

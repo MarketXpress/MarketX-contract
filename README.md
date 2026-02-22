@@ -64,31 +64,47 @@ stellar --version
 
 ## Project Structure
 
+This repository is a **Cargo workspace** — every directory under `contracts/` is automatically included as a workspace member. Adding a new contract requires no changes to the root `Cargo.toml`.
+
 ```
 .
-├── Cargo.toml               # Workspace manifest
+├── Cargo.toml               # Workspace manifest & shared dependencies
+├── Cargo.lock               # Locked dependency versions (committed)
+├── Makefile                 # Workspace-wide shortcuts (build, test, fmt, check)
 └── contracts/
-    └── marketx/             # MarketX Soroban contract
-        ├── Cargo.toml
+    └── marketx/             # Placeholder contract (replace with real logic)
+        ├── Cargo.toml       # Inherits versions from workspace
+        ├── Makefile         # Per-contract shortcuts
         └── src/
-            ├── lib.rs       # Contract logic
+            ├── lib.rs       # Contract entrypoints
             └── test.rs      # Unit tests
 ```
+
+### Adding a New Contract
+
+```bash
+stellar contract init . --name <contract-name>
+```
+
+This scaffolds `contracts/<contract-name>/` and automatically adds it to the workspace.
+Shared dependency versions (e.g. `soroban-sdk`) are inherited from `[workspace.dependencies]` in the root `Cargo.toml`.
 
 ---
 
 ## Build
 
-Build the optimized WASM artifact:
+Build all contracts as optimized WASM artifacts:
 
 ```bash
+make build
+# or directly:
 stellar contract build
 ```
 
-The compiled WASM will be at:
+Artifacts land at:
 
 ```
-target/wasm32v1-none/release/marketx.wasm
+target/wasm32v1-none/release/<contract-name>.wasm
 ```
 
 ---
@@ -96,6 +112,8 @@ target/wasm32v1-none/release/marketx.wasm
 ## Test
 
 ```bash
+make test
+# or directly:
 cargo test
 ```
 
@@ -109,10 +127,11 @@ All contract logic must be covered by unit tests.
 - Validate all inputs
 - Avoid unnecessary storage writes
 - Keep state transitions clear and deterministic
-- Format code before submitting:
+- Format and check before opening a PR:
 
 ```bash
-cargo fmt
+make fmt
+make check
 ```
 
 - Ensure no warnings before opening a PR

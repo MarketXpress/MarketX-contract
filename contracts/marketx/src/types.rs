@@ -1,6 +1,17 @@
 use soroban_sdk::{contracttype, Address};
 
 /// Lifecycle states an escrow can be in.
+///
+/// Valid transition graph:
+/// ```text
+/// Pending ──► Released   (buyer confirms delivery)
+/// Pending ──► Disputed   (dispute raised)
+/// Pending ──► Refunded   (direct cancellation)
+/// Disputed ──► Released  (resolved in seller's favour)
+/// Disputed ──► Refunded  (resolved in buyer's favour)
+/// Released — terminal —
+/// Refunded — terminal —
+/// ```
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum EscrowStatus {
@@ -12,6 +23,20 @@ pub enum EscrowStatus {
     Refunded,
     /// Dispute raised; awaiting resolution.
     Disputed,
+}
+
+impl EscrowStatus {
+    /// Returns `true` if transitioning from `self` to `next` is permitted.
+    pub fn can_transition_to(&self, next: &EscrowStatus) -> bool {
+        matches!(
+            (self, next),
+            (EscrowStatus::Pending, EscrowStatus::Released)
+                | (EscrowStatus::Pending, EscrowStatus::Disputed)
+                | (EscrowStatus::Pending, EscrowStatus::Refunded)
+                | (EscrowStatus::Disputed, EscrowStatus::Released)
+                | (EscrowStatus::Disputed, EscrowStatus::Refunded)
+        )
+    }
 }
 
 /// Core escrow record stored on-chain.

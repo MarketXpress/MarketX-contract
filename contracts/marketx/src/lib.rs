@@ -64,6 +64,19 @@ impl Contract {
 
         Ok(())
     }
-}
 
-mod test;
+    /// Initialize the contract with an initial value.
+    pub fn initialize(env: Env, initial_value: u32) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::InitialValue, &initial_value);
+    }
+
+    /// Get the initial value.
+    pub fn get_initial_value(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::InitialValue)
+            .unwrap_or(0)
+    }
+}

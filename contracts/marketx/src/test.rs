@@ -228,3 +228,12 @@ fn test_transition_on_missing_escrow_rejected() {
     let result = client.try_transition_status(&99u64, &EscrowStatus::Released);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_initialize_and_get_value() {
+    let (env, client) = setup();
+
+    client.initialize(&42u32);
+    let value = client.get_initial_value();
+    assert_eq!(value, 42);
+}

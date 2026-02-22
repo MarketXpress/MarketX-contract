@@ -66,6 +66,31 @@ fn test_multiple_escrows_stored_independently() {
 }
 
 #[test]
+fn test_try_get_escrow_success() {
+    let (env, client) = setup();
+    let (escrow, buyer, seller, token) = make_escrow(&env);
+
+    client.store_escrow(&1u64, &escrow);
+    let result = client.try_get_escrow(&1u64);
+
+    assert!(result.is_ok());
+    let retrieved = result.unwrap();
+    assert_eq!(retrieved.buyer, buyer);
+    assert_eq!(retrieved.seller, seller);
+    assert_eq!(retrieved.token, token);
+    assert_eq!(retrieved.amount, 5_000_000);
+    assert_eq!(retrieved.status, EscrowStatus::Pending);
+}
+
+#[test]
+fn test_try_get_escrow_not_found() {
+    let (_env, client) = setup();
+
+    let result = client.try_get_escrow(&99u64);
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_escrow_status_variants_round_trip() {
     let (env, client) = setup();
 

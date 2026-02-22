@@ -62,4 +62,6 @@ pub enum DataKey {
     Escrow(u64),
     /// Running count of escrows created; used for ID generation.
     EscrowCount,
+    /// Initial value set during initialization.
+    InitialValue,
 }

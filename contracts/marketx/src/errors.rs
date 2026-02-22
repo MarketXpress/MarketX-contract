@@ -7,4 +7,6 @@ pub enum ContractError {
     EscrowNotFound = 1,
     /// The requested status transition is not permitted from the current state.
     InvalidTransition = 2,
+    /// Escrow is not in a funded state (Pending).
+    EscrowNotFunded = 3,
 }

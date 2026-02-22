@@ -42,6 +42,17 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
+        // Require buyer authorization for buyer-initiated transitions
+        if matches!(
+            (&escrow.status, &new_status),
+            (EscrowStatus::Pending, EscrowStatus::Released)
+                | (EscrowStatus::Pending, EscrowStatus::Disputed)
+                | (EscrowStatus::Pending, EscrowStatus::Refunded)
+                | (EscrowStatus::Disputed, EscrowStatus::Refunded)
+        ) {
+            escrow.buyer.require_auth();
+        }
+
         if !escrow.status.can_transition_to(&new_status) {
             return Err(ContractError::InvalidTransition);
         }

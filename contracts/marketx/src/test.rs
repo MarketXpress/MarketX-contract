@@ -90,9 +90,10 @@ fn test_escrow_status_variants_round_trip() {
 #[test]
 fn test_pending_to_released() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (escrow, buyer, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Released);
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Released);
 }
@@ -100,9 +101,10 @@ fn test_pending_to_released() {
 #[test]
 fn test_pending_to_disputed() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (escrow, buyer, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Disputed);
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Disputed);
 }
@@ -110,9 +112,10 @@ fn test_pending_to_disputed() {
 #[test]
 fn test_pending_to_refunded() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (escrow, buyer, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Refunded);
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Refunded);
 }
@@ -120,9 +123,10 @@ fn test_pending_to_refunded() {
 #[test]
 fn test_disputed_to_released() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (escrow, buyer, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Disputed);
     client.transition_status(&1u64, &EscrowStatus::Released);
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Released);
@@ -131,10 +135,12 @@ fn test_disputed_to_released() {
 #[test]
 fn test_disputed_to_refunded() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (escrow, buyer, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Disputed);
+    env.mock_auths(&[&buyer]);
     client.transition_status(&1u64, &EscrowStatus::Refunded);
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Refunded);
 }

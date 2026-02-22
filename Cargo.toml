@@ -4,6 +4,10 @@ members = [
   "contracts/*",
 ]
 
+# ---------------------------------------------------------------------------
+# Shared dependencies — referenced by individual contracts via
+# `{ workspace = true }` to keep versions consistent across all crates.
+# ---------------------------------------------------------------------------
 [workspace.dependencies]
 soroban-sdk = "25"
 
@@ -17,7 +21,7 @@ panic = "abort"
 codegen-units = 1
 lto = true
 
-# For more information about this profile see https://soroban.stellar.org/docs/basic-tutorials/logging#cargotoml-profile
+# Enable logging in release builds for local debugging; do not deploy this.
 [profile.release-with-logs]
 inherits = "release"
 debug-assertions = true

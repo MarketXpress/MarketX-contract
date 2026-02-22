@@ -1,22 +1,27 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, Env};
+
+mod types;
+pub use types::{DataKey, Escrow, EscrowStatus};
 
 #[contract]
 pub struct Contract;
 
-// This is a sample contract. Replace this placeholder with your own contract logic.
-// A corresponding test example is available in `test.rs`.
-//
-// For comprehensive examples, visit <https://github.com/stellar/soroban-examples>.
-// The repository includes use cases for the Stellar ecosystem, such as data storage on
-// the blockchain, token swaps, liquidity pools, and more.
-//
-// Refer to the official documentation:
-// <https://developers.stellar.org/docs/build/smart-contracts/overview>.
 #[contractimpl]
 impl Contract {
-    pub fn hello(env: Env, to: String) -> Vec<String> {
-        vec![&env, String::from_str(&env, "Hello"), to]
+    /// Persist an escrow record under the given ID.
+    pub fn store_escrow(env: Env, escrow_id: u64, escrow: Escrow) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+    }
+
+    /// Retrieve an escrow record by ID. Panics if not found.
+    pub fn get_escrow(env: Env, escrow_id: u64) -> Escrow {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .unwrap()
     }
 }
 

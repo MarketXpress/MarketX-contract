@@ -27,8 +27,7 @@
 //! - [`errors`] — [`ContractError`] variants returned by fallible functions.
 //! - [`types`]  — [`Escrow`], [`EscrowStatus`], and [`DataKey`] definitions.
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
-
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env};
 mod errors;
 mod types;
 pub use errors::ContractError;
@@ -76,7 +75,9 @@ impl Contract {
 
     // ─── Escrow Storage ──────────────────────────────────────────────────────
 
-    /// Persist a new escrow record under the given ID.
+    /// Persist a new escrow record under the given ID and emit an `escrow_cr`
+    /// event with `escrow_id` as the second topic and the full [`Escrow`]
+    /// payload as event data.
     ///
     /// Writes `escrow` to persistent storage keyed by `DataKey::Escrow(escrow_id)`.
     /// If a record already exists for `escrow_id` it is silently overwritten —
@@ -88,10 +89,16 @@ impl Contract {
     ///
     /// * `escrow_id` — caller-assigned unique identifier for this escrow.
     /// * `escrow`    — fully populated [`Escrow`] record to store.
+    #[allow(deprecated)]
     pub fn store_escrow(env: Env, escrow_id: u64, escrow: Escrow) {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        env.events().publish(
+            (symbol_short!("escrow_cr"), escrow_id),
+            escrow,
+        );
     }
 
     /// Retrieve an escrow record by ID.
@@ -362,7 +369,7 @@ impl Contract {
     ///
     /// # Errors
     ///
-    /// - [`ContractError::EscrowNotFound`]    — no record for `escrow_id`.
+    /// - [`ContractError::EscrowNotFound`]    — no record for `escrow_id`
     /// - [`ContractError::InvalidTransition`] — move not permitted from the
     ///   current state (includes self-transitions and exits from terminal states).
     pub fn transition_status(
@@ -397,7 +404,8 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
-
         Ok(())
     }
 }
+
+mod test;

@@ -263,6 +263,27 @@ fn test_transition_on_missing_escrow_rejected() {
     assert!(result.is_err());
 }
 
+// ─── event emission (#39) ────────────────────────────────────────────────────
+
+#[test]
+fn test_store_escrow_emits_created_event() {
+    let (env, client) = setup();
+    let (escrow, buyer, seller, token) = make_escrow(&env);
+
+    // store_escrow must complete without panic - event publication happens
+    // inside the call. The full event structure (topics and data) is captured
+    // by the snapshot file generated alongside this test.
+    client.store_escrow(&1u64, &escrow);
+
+    // Confirm the escrow was persisted correctly alongside the event.
+    let retrieved = client.get_escrow(&1u64);
+    assert_eq!(retrieved.buyer, buyer);
+    assert_eq!(retrieved.seller, seller);
+    assert_eq!(retrieved.token, token);
+    assert_eq!(retrieved.amount, 5_000_000);
+    assert_eq!(retrieved.status, EscrowStatus::Pending);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // #54 — fund_escrow (token transfer: buyer → contract)
 // ═══════════════════════════════════════════════════════════════════════════

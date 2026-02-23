@@ -212,4 +212,6 @@ pub enum DataKey {
     GlobalRefundHistory,
     /// Initial value for the contract (legacy field).
     InitialValue,
+    /// Vector of all escrow IDs for pagination.
+    EscrowIds,
 }

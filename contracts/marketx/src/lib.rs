@@ -125,6 +125,17 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
+        // Track escrow ID for pagination
+        let mut escrow_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowIds)
+            .unwrap_or(Vec::new(&env));
+        escrow_ids.push_back(escrow_id);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowIds, &escrow_ids);
+
         env.events().publish(
             (symbol_short!("escrow_cr"), escrow_id),
             escrow,
@@ -166,6 +177,52 @@ impl Contract {
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)
+    }
+
+    /// Get all escrow IDs with pagination.
+    ///
+    /// Returns a slice of escrow IDs from the stored vector, starting at
+    /// index `start` with up to `limit` elements. Handles out-of-bounds
+    /// gracefully by returning an empty list when the range is invalid.
+    ///
+    /// # Arguments
+    ///
+    /// * `start` — starting index for pagination (0-based).
+    /// * `limit` — maximum number of IDs to return.
+    ///
+    /// # Returns
+    ///
+    /// Vector of escrow IDs within the specified range, or empty vector
+    /// if start exceeds the total count.
+    pub fn get_escrow_ids(env: Env, start: u32, limit: u32) -> Vec<u64> {
+        let escrow_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowIds)
+            .unwrap_or(Vec::new(&env));
+
+        let total_count = escrow_ids.len();
+
+        // Handle out-of-bounds: return empty vector if start >= total
+        if start >= total_count {
+            return Vec::new(&env);
+        }
+
+        // Calculate end index (capped at total_count)
+        let end = (start + limit).min(total_count);
+
+        // Extract the requested slice
+        let mut result = Vec::new(&env);
+        let start_idx = start as u64;
+        let end_idx = end as u64;
+
+        for i in start_idx..end_idx {
+            if let Some(id) = escrow_ids.get(i) {
+                result.push_back(id);
+            }
+        }
+
+        result
     }
 
     // ─── Token Operations ────────────────────────────────────────────────────
@@ -523,6 +580,58 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::Admin)
+    }
+
+    // ─── Fee Management ────────────────────────────────────────────────────────
+
+    /// Set the platform fee percentage (basis points).
+    ///
+    /// Only callable by the admin. Validates that the fee is within the allowed
+    /// range (0-1000 bps = 0-10%). Emits an event on successful fee change.
+    ///
+    /// # Arguments
+    ///
+    /// * `fee_bps` — new platform fee in basis points (`0..=1000`).
+    ///   For example, `250` = 2.5 %.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::NotAdmin`] — caller is not the admin.
+    /// - [`ContractError::InvalidFeeConfig`] — `fee_bps` exceeds 1000.
+    pub fn set_fee_percentage(env: Env, fee_bps: u32) -> Result<(), ContractError> {
+        // Verify admin
+        let admin = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .ok_or(ContractError::NotAdmin)?;
+        admin.require_auth();
+
+        // Validate fee is within allowed range (max 10% = 1000 bps)
+        if fee_bps > 1000 {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+
+        // Store the new fee
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeBps, &fee_bps);
+
+        // Emit event for fee change
+        env.events().publish(
+            symbol_short!("fee_chg"),
+            fee_bps,
+        );
+
+        Ok(())
+    }
+
+    /// Get the current fee percentage in basis points.
+    pub fn get_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(0)
     }
 
     // ─── Refund Request Functions ───────────────────────────────────────────

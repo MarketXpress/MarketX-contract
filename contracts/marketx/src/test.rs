@@ -132,18 +132,131 @@ fn test_initialize_admin_immutable() {
     // Initialize with first admin
     assert!(client.initialize(&admin1, &collector, &250u32).is_ok());
     
-    // Verify admin address cannot be changed - the admin parameter is ignored on subsequent calls
-    // Only fee_collector and fee_bps can be updated with admin authorization
-    let result = client.try_initialize(&admin2, &collector, &500u32);
-    // The call should succeed but admin remains admin1 (immutable)
-    assert!(result.is_ok());
-    
-    // Verify admin is still admin1
+    // Verify admin is still admin1 after attempting to update with admin2
     let stored_admin = client.get_admin();
     assert_eq!(stored_admin.unwrap(), admin1);
     
-    // Verify fee_bps was updated
-    // Note: We'd need a getter for fee_bps to verify this
+    // Verify fee_bps was set
+    let fee_bps = client.get_fee_bps();
+    assert_eq!(fee_bps, 250);
+}
+
+// ─── fee management tests ──────────────────────────────────────────────────
+
+#[test]
+fn test_set_fee_percentage_by_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    
+    // Initialize with admin
+    assert!(client.initialize(&admin, &collector, &250u32).is_ok());
+    
+    // Admin updates fee percentage
+    env.mock_all_auths();
+    assert!(client.set_fee_percentage(&500u32).is_ok());
+    
+    // Verify fee was updated
+    let fee_bps = client.get_fee_bps();
+    assert_eq!(fee_bps, 500);
+}
+
+#[test]
+fn test_set_fee_percentage_invalid_fee_rejected() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    
+    // Initialize with admin
+    assert!(client.initialize(&admin, &collector, &250u32).is_ok());
+    
+    // Try to set fee above max (1000 bps = 10%)
+    env.mock_all_auths();
+    let result = client.try_set_fee_percentage(&1001u32);
+    assert_eq!(result, Err(Ok(ContractError::InvalidFeeConfig)));
+}
+
+// ─── escrow pagination tests ────────────────────────────────────────────────
+
+#[test]
+fn test_get_escrow_ids_pagination() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    
+    // Initialize
+    assert!(client.initialize(&admin, &collector, &250u32).is_ok());
+    
+    // Store multiple escrows
+    let escrow1 = Escrow {
+        buyer: Address::generate(&env),
+        seller: Address::generate(&env),
+        arbiter: Address::generate(&env),
+        token: Address::generate(&env),
+        amount: 1000,
+        status: EscrowStatus::Pending,
+        refund_deadline: 0,
+        allow_partial_refund: false,
+    };
+    let escrow2 = Escrow {
+        buyer: Address::generate(&env),
+        seller: Address::generate(&env),
+        arbiter: Address::generate(&env),
+        token: Address::generate(&env),
+        amount: 2000,
+        status: EscrowStatus::Pending,
+        refund_deadline: 0,
+        allow_partial_refund: false,
+    };
+    let escrow3 = Escrow {
+        buyer: Address::generate(&env),
+        seller: Address::generate(&env),
+        arbiter: Address::generate(&env),
+        token: Address::generate(&env),
+        amount: 3000,
+        status: EscrowStatus::Pending,
+        refund_deadline: 0,
+        allow_partial_refund: false,
+    };
+    
+    client.store_escrow(&1u64, &escrow1);
+    client.store_escrow(&2u64, &escrow2);
+    client.store_escrow(&3u64, &escrow3);
+    
+    // Get first page
+    let page1 = client.get_escrow_ids(&0u32, &2u32);
+    assert_eq!(page1.len(), 2);
+    
+    // Get second page
+    let page2 = client.get_escrow_ids(&2u32, &2u32);
+    assert_eq!(page2.len(), 1);
+}
+
+#[test]
+fn test_get_escrow_ids_out_of_bounds() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    
+    // Initialize
+    assert!(client.initialize(&admin, &collector, &250u32).is_ok());
+    
+    // Store one escrow
+    let escrow = Escrow {
+        buyer: Address::generate(&env),
+        seller: Address::generate(&env),
+        arbiter: Address::generate(&env),
+        token: Address::generate(&env),
+        amount: 1000,
+        status: EscrowStatus::Pending,
+        refund_deadline: 0,
+        allow_partial_refund: false,
+    };
+    client.store_escrow(&1u64, &escrow);
+    
+    // Request beyond bounds
+    let result = client.get_escrow_ids(&5u32, &10u32);
+    assert_eq!(result.len(), 0);
 }
 
 // ─── storage tests (from #29) ────────────────────────────────────────────────

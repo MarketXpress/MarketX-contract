@@ -406,6 +406,59 @@ impl Contract {
             .set(&DataKey::Escrow(escrow_id), &escrow);
         Ok(())
     }
-}
 
-mod test;
+    /// Resolve a dispute by transitioning to Released or Refunded.
+    /// Only callable by the arbiter when escrow is in Disputed state.
+    ///
+    /// Errors:
+    /// - `ContractError::EscrowNotFound`   — no record for `escrow_id`
+    /// - `ContractError::Unauthorized`     — caller is not the arbiter
+    /// - `ContractError::InvalidTransition` — escrow is not in Disputed state or invalid resolution
+    pub fn resolve_dispute(
+        env: Env,
+        escrow_id: u64,
+        resolution: EscrowStatus,
+    ) -> Result<(), ContractError> {
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // Require arbiter authorization
+        escrow.arbiter.require_auth();
+
+        // Must be in Disputed state
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(ContractError::InvalidTransition);
+        }
+
+        // Resolution must be either Released or Refunded
+        if !matches!(resolution, EscrowStatus::Released | EscrowStatus::Refunded) {
+            return Err(ContractError::InvalidTransition);
+        }
+
+        escrow.status = resolution;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        Ok(())
+    }
+
+    /// Initialize the contract with an initial value.
+    pub fn initialize(env: Env, initial_value: u32) {
+        env.storage()
+            .persistent()
+            .set(&DataKey::InitialValue, &initial_value);
+    }
+
+    /// Get the initial value.
+    pub fn get_initial_value(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::InitialValue)
+            .unwrap_or(0)
+    }
+}
+}

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address};
+use soroban_sdk::{contracttype, Address, Env, Vec};
 
 /// Lifecycle states an escrow can be in.
 ///
@@ -49,6 +49,90 @@ impl EscrowStatus {
     }
 }
 
+/// Status of a refund request.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RefundStatus {
+    /// Refund request has been submitted and is awaiting admin approval.
+    Pending,
+    /// Refund has been approved and is being processed.
+    Approved,
+    /// Refund has been rejected by admin.
+    Rejected,
+    /// Refund has been completed (funds returned to buyer).
+    Completed,
+    /// Refund request was cancelled by the buyer.
+    Cancelled,
+}
+
+/// Reasons for requesting a refund.
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub enum RefundReason {
+    /// Buyer changed their mind about the purchase.
+    ChangedMind,
+    /// Item was not as described or expected.
+    NotAsDescribed,
+    /// Item was damaged or defective.
+    DamagedDefective,
+    /// Item was not received.
+    NotReceived,
+    /// Seller failed to deliver within agreed timeframe.
+    SellerFailedToDeliver,
+    /// Other reason specified by buyer.
+    Other,
+}
+
+/// Refund request submitted by a buyer.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RefundRequest {
+    /// Unique identifier for this refund request.
+    pub refund_id: u64,
+    /// The escrow ID this refund request is for.
+    pub escrow_id: u64,
+    /// Address of the buyer who submitted the refund request.
+    pub buyer: Address,
+    /// Amount being requested for refund (can be partial or full).
+    pub refund_amount: i128,
+    /// Reason for the refund request.
+    pub reason: RefundReason,
+    /// Additional description provided by the buyer.
+    pub description: String,
+    /// Current status of the refund request.
+    pub status: RefundStatus,
+    /// Timestamp when the refund request was submitted (ledger number).
+    pub created_at: u64,
+    /// Timestamp when the refund request was last updated.
+    pub updated_at: u64,
+    /// Timestamp when the refund window expires.
+    pub expires_at: u64,
+    /// Admin address that approved/rejected the request (if any).
+    pub processed_by: Option<Address>,
+    /// Timestamp when the request was processed.
+    pub processed_at: Option<u64>,
+    /// Rejection reason (if rejected).
+    pub rejection_reason: Option<String>,
+}
+
+/// Refund history entry for tracking all refund events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct RefundHistoryEntry {
+    /// The refund request ID.
+    pub refund_id: u64,
+    /// The escrow ID.
+    pub escrow_id: u64,
+    /// Amount that was refunded.
+    pub amount: i128,
+    /// Whether this was a full or partial refund.
+    pub is_full_refund: bool,
+    /// Timestamp when the refund was processed.
+    pub processed_at: u64,
+    /// Admin who processed the refund.
+    pub processed_by: Address,
+}
+
 /// Core escrow record stored on-chain under [`DataKey::Escrow`].
 ///
 /// Serialized as a `map` in XDR/SCVal form. Field names become symbol keys
@@ -77,6 +161,10 @@ pub struct Escrow {
     /// [`Contract::release_escrow`], [`Contract::refund_escrow`], and
     /// [`Contract::transition_status`].
     pub status: EscrowStatus,
+    /// Deadline for requesting refunds (ledger number). 0 means no deadline.
+    pub refund_deadline: u64,
+    /// Indicates if this escrow allows partial refunds.
+    pub allow_partial_refund: bool,
 }
 
 /// Storage key discriminants for the contract's persistent store.
@@ -110,4 +198,18 @@ pub enum DataKey {
     ///
     /// Example: `250` = 2.5 % fee.
     FeeBps,
+    /// Admin address for the contract (can approve/refund requests).
+    Admin,
+    /// Maps `refund_id: u64` → [`RefundRequest`] record.
+    RefundRequest(u64),
+    /// Running count of refund requests.
+    RefundCount,
+    /// Maps `escrow_id: u64` → Vec of refund request IDs for that escrow.
+    EscrowRefunds(u64),
+    /// Maps `escrow_id: u64` → refund history for that escrow.
+    RefundHistory(u64),
+    /// Contract-level refund history (list of all refund history entries).
+    GlobalRefundHistory,
+    /// Initial value for the contract (legacy field).
+    InitialValue,
 }

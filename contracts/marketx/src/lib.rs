@@ -40,14 +40,16 @@ pub struct Contract;
 impl Contract {
     // ─── Initialization ──────────────────────────────────────────────────────
 
-    /// Initialize the contract with platform fee configuration.
+    /// Initialize the contract with platform fee configuration and admin address.
     ///
-    /// Stores `fee_collector` and `fee_bps` in persistent storage. Must be
+    /// Stores `admin`, `fee_collector` and `fee_bps` in persistent storage. Must be
     /// called before [`release_escrow`] is used. Can be called multiple times
-    /// to update fee parameters — subsequent calls overwrite previous values.
+    /// to update fee parameters — subsequent calls require admin authorization.
+    /// Once the admin is set, it cannot be changed (immutable).
     ///
     /// # Arguments
     ///
+    /// * `admin`         — address with admin privileges for fee management.
     /// * `fee_collector` — address that receives the platform fee on each
     ///   release. Typically a treasury or multisig wallet.
     /// * `fee_bps`       — platform fee in basis points (`0..=10_000`).
@@ -56,14 +58,33 @@ impl Contract {
     /// # Errors
     ///
     /// - [`ContractError::InvalidFeeConfig`] — `fee_bps` exceeds 10 000.
+    /// - [`ContractError::NotAdmin`] — admin already set and caller is not the admin.
     pub fn initialize(
         env: Env,
+        admin: Address,
         fee_collector: Address,
         fee_bps: u32,
     ) -> Result<(), ContractError> {
         if fee_bps > 10_000 {
             return Err(ContractError::InvalidFeeConfig);
         }
+
+        // Check if admin is already set - if so, require admin authorization for updates
+        // Admin is immutable after initialization, so we just check auth
+        if env.storage().persistent().has(&DataKey::Admin) {
+            let current_admin = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::Admin)
+                .unwrap();
+            current_admin.require_auth();
+        } else {
+            // First initialization - store the admin address
+            env.storage()
+                .persistent()
+                .set(&DataKey::Admin, &admin);
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::FeeCollector, &fee_collector);

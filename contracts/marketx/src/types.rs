@@ -47,6 +47,8 @@ pub struct Escrow {
     pub buyer: Address,
     /// Party receiving funds on release.
     pub seller: Address,
+    /// Neutral party who can resolve disputes.
+    pub arbiter: Address,
     /// Token contract address used for the escrow.
     pub token: Address,
     /// Amount locked in escrow (in the token's base unit).

@@ -229,6 +229,153 @@ fn test_transition_on_missing_escrow_rejected() {
     assert!(result.is_err());
 }
 
+// ─── wrong caller tests ──────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "not satisfied")]
+fn test_wrong_caller_pending_to_released() {
+    let (env, client) = setup();
+    let (escrow, _buyer, seller, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    // Seller tries to release (only buyer can)
+    env.mock_auths(&[&seller]);
+    client.transition_status(&1u64, &EscrowStatus::Released);
+}
+
+#[test]
+#[should_panic(expected = "not satisfied")]
+fn test_wrong_caller_pending_to_disputed() {
+    let (env, client) = setup();
+    let (escrow, _buyer, seller, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    // Seller tries to dispute (only buyer can)
+    env.mock_auths(&[&seller]);
+    client.transition_status(&1u64, &EscrowStatus::Disputed);
+}
+
+#[test]
+#[should_panic(expected = "not satisfied")]
+fn test_wrong_caller_pending_to_refunded() {
+    let (env, client) = setup();
+    let (escrow, _buyer, seller, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    // Seller tries to refund (only buyer can)
+    env.mock_auths(&[&seller]);
+    client.transition_status(&1u64, &EscrowStatus::Refunded);
+}
+
+#[test]
+#[should_panic(expected = "not satisfied")]
+fn test_wrong_caller_disputed_to_refunded() {
+    let (env, client) = setup();
+    let (escrow, buyer, seller, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    // Buyer disputes first
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Disputed);
+
+    // Seller tries to refund (only buyer can)
+    env.mock_auths(&[&seller]);
+    client.transition_status(&1u64, &EscrowStatus::Refunded);
+}
+
+#[test]
+#[should_panic(expected = "not satisfied")]
+fn test_unauthorized_third_party_cannot_transition() {
+    let (env, client) = setup();
+    let (escrow, _buyer, _seller, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    // Random third party tries to transition
+    let third_party = Address::generate(&env);
+    env.mock_auths(&[&third_party]);
+    client.transition_status(&1u64, &EscrowStatus::Released);
+}
+
+// ─── invalid state transitions ───────────────────────────────────────────────
+
+#[test]
+fn test_released_to_pending_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Released);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Pending);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_released_to_disputed_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Released);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Disputed);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_refunded_to_pending_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Refunded);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Pending);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_refunded_to_disputed_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Refunded);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Disputed);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_refunded_to_released_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Refunded);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Released);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_released_to_refunded_rejected() {
+    let (env, client) = setup();
+    let (escrow, buyer, _, _) = make_escrow(&env);
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_auths(&[&buyer]);
+    client.transition_status(&1u64, &EscrowStatus::Released);
+
+    let result = client.try_transition_status(&1u64, &EscrowStatus::Refunded);
+    assert!(result.is_err());
+}
+
 #[test]
 fn test_initialize_and_get_value() {
     let (env, client) = setup();

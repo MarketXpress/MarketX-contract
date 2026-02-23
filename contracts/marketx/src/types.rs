@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, String};
 
 /// Lifecycle states an escrow can be in.
 ///

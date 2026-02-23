@@ -7,4 +7,6 @@ pub enum ContractError {
     EscrowNotFound = 1,
     /// The requested status transition is not permitted from the current state.
     InvalidTransition = 2,
+    /// The caller is not authorized to perform this action.
+    Unauthorized = 3,
 }

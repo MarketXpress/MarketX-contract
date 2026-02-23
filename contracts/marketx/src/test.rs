@@ -1,22 +1,43 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    testutils::Address as _,
+    token, Address, Env,
+};
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 fn make_escrow(env: &Env) -> (Escrow, Address, Address, Address) {
     let buyer = Address::generate(env);
     let seller = Address::generate(env);
-    let token = Address::generate(env);
+    let token_addr = Address::generate(env);
     let escrow = Escrow {
         buyer: buyer.clone(),
         seller: seller.clone(),
-        token: token.clone(),
+        token: token_addr.clone(),
         amount: 5_000_000,
         status: EscrowStatus::Pending,
     };
-    (escrow, buyer, seller, token)
+    (escrow, buyer, seller, token_addr)
+}
+
+/// Deploy the MarketX contract and a real Soroban token, mint `amount` to
+/// `recipient`, and return the contract client, token address, and token admin client.
+fn setup_with_token(
+    env: &Env,
+    amount: i128,
+    recipient: &Address,
+) -> (ContractClient<'static>, Address, token::StellarAssetClient<'static>) {
+    let contract_id = env.register(Contract, ());
+    let client = ContractClient::new(env, &contract_id);
+
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_sac = token::StellarAssetClient::new(env, &token_contract.address());
+    token_sac.mint(recipient, &amount);
+
+    (client, token_contract.address(), token_sac)
 }
 
 fn setup() -> (Env, ContractClient<'static>) {
@@ -26,19 +47,44 @@ fn setup() -> (Env, ContractClient<'static>) {
     (env, client)
 }
 
+// ─── initialization tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_stores_fee_config() {
+    let (env, client) = setup();
+    let collector = Address::generate(&env);
+    assert!(client.initialize(&collector, &250u32).is_ok());
+}
+
+#[test]
+fn test_initialize_fee_bps_boundary_accepted() {
+    let (env, client) = setup();
+    let collector = Address::generate(&env);
+    // 10_000 bps = 100 % — extreme but valid.
+    assert!(client.initialize(&collector, &10_000u32).is_ok());
+}
+
+#[test]
+fn test_initialize_invalid_fee_bps_rejected() {
+    let (env, client) = setup();
+    let collector = Address::generate(&env);
+    let result = client.try_initialize(&collector, &10_001u32);
+    assert_eq!(result, Err(Ok(ContractError::InvalidFeeConfig)));
+}
+
 // ─── storage tests (from #29) ────────────────────────────────────────────────
 
 #[test]
 fn test_store_and_retrieve_escrow() {
     let (env, client) = setup();
-    let (escrow, buyer, seller, token) = make_escrow(&env);
+    let (escrow, buyer, seller, token_addr) = make_escrow(&env);
 
     client.store_escrow(&1u64, &escrow);
     let retrieved = client.get_escrow(&1u64);
 
     assert_eq!(retrieved.buyer, buyer);
     assert_eq!(retrieved.seller, seller);
-    assert_eq!(retrieved.token, token);
+    assert_eq!(retrieved.token, token_addr);
     assert_eq!(retrieved.amount, 5_000_000);
     assert_eq!(retrieved.status, EscrowStatus::Pending);
 }
@@ -66,6 +112,30 @@ fn test_multiple_escrows_stored_independently() {
 }
 
 #[test]
+fn test_try_get_escrow_success() {
+    let (env, client) = setup();
+    let (escrow, buyer, seller, token_addr) = make_escrow(&env);
+
+    client.store_escrow(&1u64, &escrow);
+    let result = client.try_get_escrow(&1u64);
+
+    assert!(result.is_ok());
+    let retrieved = result.unwrap();
+    assert_eq!(retrieved.buyer, buyer);
+    assert_eq!(retrieved.seller, seller);
+    assert_eq!(retrieved.token, token_addr);
+    assert_eq!(retrieved.amount, 5_000_000);
+    assert_eq!(retrieved.status, EscrowStatus::Pending);
+}
+
+#[test]
+fn test_try_get_escrow_not_found() {
+    let (_env, client) = setup();
+    let result = client.try_get_escrow(&99u64);
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_escrow_status_variants_round_trip() {
     let (env, client) = setup();
 
@@ -85,64 +155,29 @@ fn test_escrow_status_variants_round_trip() {
     }
 }
 
-// ─── valid transitions ───────────────────────────────────────────────────────
-
-#[test]
-fn test_pending_to_released() {
-    let (env, client) = setup();
-    let (escrow, buyer, _, _) = make_escrow(&env);
-    client.store_escrow(&1u64, &escrow);
-
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Released);
-    assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Released);
-}
+// ─── status-only transition tests ────────────────────────────────────────────
 
 #[test]
 fn test_pending_to_disputed() {
     let (env, client) = setup();
-    let (escrow, buyer, _, _) = make_escrow(&env);
+    let (escrow, _, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Disputed);
+    env.mock_all_auths();
+    client.transition_status(&1u64, &EscrowStatus::Disputed).unwrap();
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Disputed);
 }
 
 #[test]
-fn test_pending_to_refunded() {
+fn test_disputed_to_released_via_transition() {
     let (env, client) = setup();
-    let (escrow, buyer, _, _) = make_escrow(&env);
+    let (escrow, _, _, _) = make_escrow(&env);
     client.store_escrow(&1u64, &escrow);
 
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Refunded);
-    assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Refunded);
-}
-
-#[test]
-fn test_disputed_to_released() {
-    let (env, client) = setup();
-    let (escrow, buyer, _, _) = make_escrow(&env);
-    client.store_escrow(&1u64, &escrow);
-
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Disputed);
-    client.transition_status(&1u64, &EscrowStatus::Released);
+    env.mock_all_auths();
+    client.transition_status(&1u64, &EscrowStatus::Disputed).unwrap();
+    client.transition_status(&1u64, &EscrowStatus::Released).unwrap();
     assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Released);
-}
-
-#[test]
-fn test_disputed_to_refunded() {
-    let (env, client) = setup();
-    let (escrow, buyer, _, _) = make_escrow(&env);
-    client.store_escrow(&1u64, &escrow);
-
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Disputed);
-    env.mock_auths(&[&buyer]);
-    client.transition_status(&1u64, &EscrowStatus::Refunded);
-    assert_eq!(client.get_escrow(&1u64).status, EscrowStatus::Refunded);
 }
 
 // ─── terminal states (Released, Refunded) ────────────────────────────────────
@@ -150,9 +185,9 @@ fn test_disputed_to_refunded() {
 #[test]
 fn test_released_is_terminal() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (mut escrow, _, _, _) = make_escrow(&env);
+    escrow.status = EscrowStatus::Released;
     client.store_escrow(&1u64, &escrow);
-    client.transition_status(&1u64, &EscrowStatus::Released);
 
     for next in [
         EscrowStatus::Pending,
@@ -168,9 +203,9 @@ fn test_released_is_terminal() {
 #[test]
 fn test_refunded_is_terminal() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (mut escrow, _, _, _) = make_escrow(&env);
+    escrow.status = EscrowStatus::Refunded;
     client.store_escrow(&1u64, &escrow);
-    client.transition_status(&1u64, &EscrowStatus::Refunded);
 
     for next in [
         EscrowStatus::Pending,
@@ -198,22 +233,22 @@ fn test_self_transition_pending_rejected() {
 #[test]
 fn test_self_transition_disputed_rejected() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (mut escrow, _, _, _) = make_escrow(&env);
+    escrow.status = EscrowStatus::Disputed;
     client.store_escrow(&1u64, &escrow);
-    client.transition_status(&1u64, &EscrowStatus::Disputed);
 
     let result = client.try_transition_status(&1u64, &EscrowStatus::Disputed);
     assert!(result.is_err());
 }
 
-// ─── backward / skip transitions rejected ─────────────────────────────────────
+// ─── backward transitions rejected ───────────────────────────────────────────
 
 #[test]
 fn test_disputed_to_pending_rejected() {
     let (env, client) = setup();
-    let (escrow, _, _, _) = make_escrow(&env);
+    let (mut escrow, _, _, _) = make_escrow(&env);
+    escrow.status = EscrowStatus::Disputed;
     client.store_escrow(&1u64, &escrow);
-    client.transition_status(&1u64, &EscrowStatus::Disputed);
 
     let result = client.try_transition_status(&1u64, &EscrowStatus::Pending);
     assert!(result.is_err());
@@ -224,7 +259,6 @@ fn test_disputed_to_pending_rejected() {
 #[test]
 fn test_transition_on_missing_escrow_rejected() {
     let (_env, client) = setup();
-
     let result = client.try_transition_status(&99u64, &EscrowStatus::Released);
     assert!(result.is_err());
 }
@@ -377,10 +411,44 @@ fn test_released_to_refunded_rejected() {
 }
 
 #[test]
-fn test_initialize_and_get_value() {
-    let (env, client) = setup();
+fn test_refund_escrow_third_party_rejected() {
+    let env = Env::default();
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let third_party = Address::generate(&env);
 
-    client.initialize(&42u32);
-    let value = client.get_initial_value();
-    assert_eq!(value, 42);
+    let (client, token_id, _) = setup_with_token(&env, 5_000_000, &buyer);
+
+    let escrow = Escrow {
+        buyer: buyer.clone(),
+        seller: seller.clone(),
+        token: token_id.clone(),
+        amount: 5_000_000,
+        status: EscrowStatus::Pending,
+    };
+    client.store_escrow(&1u64, &escrow);
+
+    env.mock_all_auths();
+    let result = client.try_refund_escrow(&1u64, &third_party);
+    assert_eq!(result, Err(Ok(ContractError::Unauthorized)));
+}
+
+#[test]
+fn test_refund_escrow_terminal_state_rejected() {
+    let (env, client) = setup();
+    let (mut escrow, buyer, _, _) = make_escrow(&env);
+    escrow.status = EscrowStatus::Released;
+    client.store_escrow(&1u64, &escrow);
+
+    let result = client.try_refund_escrow(&1u64, &buyer);
+    assert_eq!(result, Err(Ok(ContractError::InvalidTransition)));
+}
+
+#[test]
+fn test_refund_escrow_not_found() {
+    let (env, client) = setup();
+    let buyer = Address::generate(&env);
+
+    let result = client.try_refund_escrow(&99u64, &buyer);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }

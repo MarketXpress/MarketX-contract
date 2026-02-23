@@ -21,6 +21,9 @@ pub enum ContractError {
     /// Also returned for self-transitions (e.g. `Pending → Pending`) and any
     /// transition out of a terminal state (`Released` or `Refunded`).
     InvalidTransition = 2,
+    /// The caller is not authorized to perform this action.
+    Unauthorized = 3,
+}
 
     /// The escrow is not in the `Pending` (funded) state.
     ///

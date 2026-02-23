@@ -66,7 +66,9 @@ pub struct Escrow {
     /// Also authorized to initiate a refund from `Pending` state, allowing
     /// voluntary cancellation on the seller's side.
     pub seller: Address,
-    /// SAC (Stellar Asset Contract) or custom token contract used for payment.
+    /// Neutral party who can resolve disputes.
+    pub arbiter: Address,
+    /// Token contract address used for the escrow.
     pub token: Address,
     /// Amount locked in escrow, denominated in the token's smallest unit
     /// (e.g. stroops for XLM: 1 XLM = 10,000,000 stroops).

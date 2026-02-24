@@ -55,6 +55,18 @@ pub struct Escrow {
     pub status: EscrowStatus,
 }
 
+/// Event emitted when an escrow's status changes.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowStatusUpdated {
+    /// The ID of the escrow that changed status.
+    pub escrow_id: u64,
+    /// The previous status.
+    pub old_status: EscrowStatus,
+    /// The new status.
+    pub new_status: EscrowStatus,
+}
+
 /// Storage key discriminants for the contract's persistent store.
 #[contracttype]
 pub enum DataKey {

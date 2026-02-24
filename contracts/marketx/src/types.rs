@@ -167,6 +167,18 @@ pub struct Escrow {
     pub allow_partial_refund: bool,
 }
 
+/// Event emitted when an escrow's status changes.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowStatusUpdated {
+    /// The ID of the escrow that changed status.
+    pub escrow_id: u64,
+    /// The previous status.
+    pub old_status: EscrowStatus,
+    /// The new status.
+    pub new_status: EscrowStatus,
+}
+
 /// Storage key discriminants for the contract's persistent store.
 ///
 /// All keys use `Persistent` durability, meaning they survive ledger

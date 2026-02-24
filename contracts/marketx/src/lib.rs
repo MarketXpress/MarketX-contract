@@ -431,6 +431,11 @@ impl Contract {
 
     /// Transition an escrow to a new status, enforcing the valid state graph.
     ///
+    /// Emits an `EscrowStatusUpdated` event on successful transition.
+    ///
+    /// Errors:
+    /// - `ContractError::EscrowNotFound`   — no record for `escrow_id`
+    /// - `ContractError::InvalidTransition` — move not permitted from current state
     /// This is the low-level state-mutation helper used for status-only changes
     /// (e.g. `Pending → Disputed`). Token-bearing transitions (`Released`,
     /// `Refunded`) should use [`release_escrow`] and [`refund_escrow`]
@@ -477,6 +482,8 @@ impl Contract {
             return Err(ContractError::InvalidTransition);
         }
 
+        let old_status = escrow.status.clone();
+        escrow.status = new_status.clone();
         // Require buyer authorization for buyer-initiated transitions.
         if matches!(
             (&escrow.status, &new_status),
@@ -530,6 +537,16 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        // Emit the status update event
+        env.events().publish(
+            ("EscrowStatusUpdated",),
+            EscrowStatusUpdated {
+                escrow_id,
+                old_status,
+                new_status,
+            },
+        );
 
         Ok(())
     }

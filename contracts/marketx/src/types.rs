@@ -109,6 +109,23 @@ pub struct StatusChangeEvent {
     pub actor: Address,
 }
 
+/// Event emitted when an escrow's status changes.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct EscrowStatusUpdated {
+    /// The ID of the escrow that changed status.
+    pub escrow_id: u64,
+    /// The previous status.
+    pub old_status: EscrowStatus,
+    /// The new status.
+    pub new_status: EscrowStatus,
+}
+
+/// Storage key discriminants for the contract's persistent store.
+///
+/// All keys use `Persistent` durability, meaning they survive ledger
+/// expiration as long as their TTL is extended. The minimum persistent
+/// entry TTL on testnet is 4,096 ledgers (~5.7 hours at 5 s/ledger).
 #[contracttype]
 pub enum DataKey {
     Escrow(u64),
@@ -124,4 +141,7 @@ pub enum DataKey {
     RefundHistory(u64),
     GlobalRefundHistory,
     InitialValue,
+}
+    /// Vector of all escrow IDs for pagination.
+    EscrowIds,
 }

@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, Address, String};
 
 /// Lifecycle states an escrow can be in.
 ///
@@ -224,6 +224,7 @@ pub enum DataKey {
     GlobalRefundHistory,
     /// Initial value for the contract (legacy field).
     InitialValue,
+}
     /// Vector of all escrow IDs for pagination.
     EscrowIds,
 }

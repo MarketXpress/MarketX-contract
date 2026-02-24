@@ -1,122 +1,26 @@
 #![no_std]
 
-//! # MarketX Contract
-//!
-//! Soroban smart contract implementing escrow logic for the MarketX
-//! decentralized marketplace on the Stellar network.
-//!
-//! ## Architecture
-//!
-//! The contract manages the full escrow lifecycle including on-chain token
-//! custody. Funds flow through three stages:
-//!
-//! 1. **Funding** ([`fund_escrow`]) — buyer transfers tokens to the contract.
-//! 2. **Release** ([`release_escrow`]) — contract transfers tokens to the
-//!    seller (minus platform fee) and fee amount to the fee collector.
-//! 3. **Refund** ([`refund_escrow`]) — contract returns the full token amount
-//!    to the buyer.
-//!
-//! State transitions are enforced by [`EscrowStatus`] and the
-//! [`transition_status`] helper. Token transfers and status updates within
-//! [`release_escrow`] and [`refund_escrow`] are sequenced so that the status
-//! only advances after a successful transfer — if the token call traps, the
-//! ledger change is rolled back atomically by the Soroban runtime.
-//!
-//! ## Modules
-//!
-//! - [`errors`] — [`ContractError`] variants returned by fallible functions.
-//! - [`types`]  — [`Escrow`], [`EscrowStatus`], and [`DataKey`] definitions.
+use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env};
 
-use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Vec};
 mod errors;
 mod types;
+
 pub use errors::ContractError;
-pub use types::{DataKey, Escrow, EscrowStatus, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus};
+pub use types::{
+    DataKey, Escrow, EscrowStatus, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+};
+
+#[cfg(test)]
+mod test;
 
 #[contract]
 pub struct Contract;
 
 #[contractimpl]
 impl Contract {
-    // ─── Initialization ──────────────────────────────────────────────────────
-
-    /// Initialize the contract with platform fee configuration and admin address.
-    ///
-    /// Stores `admin`, `fee_collector` and `fee_bps` in persistent storage. Must be
-    /// called before [`release_escrow`] is used. Can be called multiple times
-    /// to update fee parameters — subsequent calls require admin authorization.
-    /// Once the admin is set, it cannot be changed (immutable).
-    ///
-    /// # Arguments
-    ///
-    /// * `admin`         — address with admin privileges for fee management.
-    /// * `fee_collector` — address that receives the platform fee on each
-    ///   release. Typically a treasury or multisig wallet.
-    /// * `fee_bps`       — platform fee in basis points (`0..=10_000`).
-    ///   For example, `250` = 2.5 %. Pass `0` for a zero-fee deployment.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::InvalidFeeConfig`] — `fee_bps` exceeds 10 000.
-    /// - [`ContractError::NotAdmin`] — admin already set and caller is not the admin.
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        fee_collector: Address,
-        fee_bps: u32,
-    ) -> Result<(), ContractError> {
-        if fee_bps > 10_000 {
-            return Err(ContractError::InvalidFeeConfig);
-        }
-
-        // Check if admin is already set - if so, require admin authorization for updates
-        // Admin is immutable after initialization, so we just check auth
-        if env.storage().persistent().has(&DataKey::Admin) {
-            let current_admin = env
-                .storage()
-                .persistent()
-                .get::<DataKey, Address>(&DataKey::Admin)
-                .unwrap();
-            current_admin.require_auth();
-        } else {
-            // First initialization - store the admin address
-            env.storage()
-                .persistent()
-                .set(&DataKey::Admin, &admin);
-        }
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::FeeCollector, &fee_collector);
-        env.storage()
-            .persistent()
-            .set(&DataKey::FeeBps, &fee_bps);
-        Ok(())
-    }
-
-    // ─── Escrow Storage ──────────────────────────────────────────────────────
-
-    /// Persist a new escrow record under the given ID and emit an `escrow_cr`
-    /// event with `escrow_id` as the second topic and the full [`Escrow`]
-    /// payload as event data.
-    ///
-    /// Writes `escrow` to persistent storage keyed by `DataKey::Escrow(escrow_id)`.
-    /// If a record already exists for `escrow_id` it is silently overwritten —
-    /// callers are responsible for ID uniqueness. No authorization is required
-    /// by this function directly; access control should be enforced at a higher
-    /// layer or via a future `create_escrow` wrapper.
-    ///
-    /// # Arguments
-    ///
-    /// * `escrow_id` — caller-assigned unique identifier for this escrow.
-    /// * `escrow`    — fully populated [`Escrow`] record to store.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::InvalidEscrowAmount`] — amount is zero or negative.
+    /// Store a caller-constructed escrow record under a specific ID.
     #[allow(deprecated)]
     pub fn store_escrow(env: Env, escrow_id: u64, escrow: Escrow) -> Result<(), ContractError> {
-        // Validate escrow amount must be positive
         if escrow.amount <= 0 {
             return Err(ContractError::InvalidEscrowAmount);
         }
@@ -125,6 +29,8 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
+        env.events()
+            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
         // Track escrow ID for pagination
         let mut escrow_ids: Vec<u64> = env
             .storage()
@@ -495,25 +401,22 @@ impl Contract {
             escrow.buyer.require_auth();
         }
 
-        escrow.status = new_status;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(escrow_id), &escrow);
         Ok(())
     }
 
-    /// Resolve a dispute by transitioning to Released or Refunded.
-    /// Only callable by the arbiter when escrow is in Disputed state.
+    /// Create a new escrow using the required fields for issue #30.
     ///
-    /// Errors:
-    /// - `ContractError::EscrowNotFound`   — no record for `escrow_id`
-    /// - `ContractError::Unauthorized`     — caller is not the arbiter
-    /// - `ContractError::InvalidTransition` — escrow is not in Disputed state or invalid resolution
-    pub fn resolve_dispute(
+    /// Accepts buyer, seller, and amount; creates an escrow in `Pending` state;
+    /// and stores it in persistent contract storage.
+    #[allow(deprecated)]
+    pub fn create_escrow(
         env: Env,
         escrow_id: u64,
-        resolution: EscrowStatus,
+        buyer: Address,
+        seller: Address,
+        amount: i128,
     ) -> Result<(), ContractError> {
+        if amount <= 0 {
         let mut escrow: Escrow = env
             .storage()
             .persistent()
@@ -694,390 +597,41 @@ impl Contract {
             return Err(ContractError::InvalidEscrowAmount);
         }
 
-        // Validate refund amount doesn't exceed escrow amount
-        if refund_amount > escrow.amount {
-            return Err(ContractError::RefundAmountExceedsEscrow);
-        }
+        let escrow = Escrow {
+            buyer,
+            seller,
+            arbiter: env.current_contract_address(),
+            token: env.current_contract_address(),
+            amount,
+            status: EscrowStatus::Pending,
+            refund_deadline: 0,
+            allow_partial_refund: false,
+        };
 
-        // Check refund deadline
-        let current_ledger = env.ledger().sequence();
-        if escrow.refund_deadline > 0 && current_ledger > escrow.refund_deadline {
-            return Err(ContractError::RefundWindowExpired);
-        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        // Validate partial refunds are allowed if not full refund
-        if refund_amount < escrow.amount && !escrow.allow_partial_refund {
-            return Err(ContractError::RefundAmountExceedsEscrow);
-        }
-
-        // Require buyer authorization
-        escrow.buyer.require_auth();
-
-        // Generate refund ID
-        let refund_count: u64 = env
+        let escrow_count: u64 = env
             .storage()
             .persistent()
-            .get(&DataKey::RefundCount)
+            .get(&DataKey::EscrowCount)
             .unwrap_or(0);
-        let refund_id = refund_count + 1;
-
-        // Calculate expiration ledger (default 7 days = 20160 ledgers at 5s/ledger)
-        let expires_at = escrow.refund_deadline.max(current_ledger + 20160);
-
-        // Create refund request
-        let refund_request = RefundRequest {
-            refund_id,
-            escrow_id,
-            buyer: escrow.buyer.clone(),
-            refund_amount,
-            reason,
-            description,
-            status: RefundStatus::Pending,
-            created_at: current_ledger,
-            updated_at: current_ledger,
-            expires_at,
-            processed_by: None,
-            processed_at: None,
-            rejection_reason: None,
-        };
-
-        // Store refund request
         env.storage()
             .persistent()
-            .set(&DataKey::RefundRequest(refund_id), &refund_request);
+            .set(&DataKey::EscrowCount, &(escrow_count + 1));
 
-        // Update refund count
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundCount, &refund_id);
-
-        // Track refund ID in escrow's refund list
-        let mut escrow_refunds: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowRefunds(escrow_id))
-            .unwrap_or(Vec::new(&env));
-        escrow_refunds.push_back(refund_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowRefunds(escrow_id), &escrow_refunds);
-
-        // Emit event
-        env.events().publish(
-            (symbol_short!("refund_req"), refund_id),
-            refund_request,
-        );
-
-        Ok(refund_id)
-    }
-
-    /// Get a refund request by ID.
-    pub fn get_refund_request(env: Env, refund_id: u64) -> Result<RefundRequest, ContractError> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RefundRequest(refund_id))
-            .ok_or(ContractError::RefundRequestNotFound)
-    }
-
-    /// Get all refund requests for an escrow.
-    pub fn get_escrow_refunds(env: Env, escrow_id: u64) -> Vec<u64> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::EscrowRefunds(escrow_id))
-            .unwrap_or(Vec::new(&env))
-    }
-
-    // ─── Admin Refund Processing ─────────────────────────────────────────────
-
-    /// Approve a refund request.
-    ///
-    /// Only callable by the admin. After approval, the refund can be processed.
-    ///
-    /// # Arguments
-    ///
-    /// * `refund_id` — identifier of the refund request to approve.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::RefundRequestNotFound`] — no refund request exists.
-    /// - [`ContractError::RefundAlreadyProcessed`] — request already processed.
-    /// - [`ContractError::NotAdmin`] — caller is not the admin.
-    pub fn approve_refund_request(env: Env, refund_id: u64) -> Result<(), ContractError> {
-        // Verify admin
-        let admin = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Address>(&DataKey::Admin)
-            .ok_or(ContractError::NotAdmin)?;
-        admin.require_auth();
-
-        // Get refund request
-        let mut refund_request = env
-            .storage()
-            .persistent()
-            .get::<DataKey, RefundRequest>(&DataKey::RefundRequest(refund_id))
-            .ok_or(ContractError::RefundRequestNotFound)?;
-
-        // Check not already processed
-        if refund_request.status != RefundStatus::Pending {
-            return Err(ContractError::RefundAlreadyProcessed);
-        }
-
-        // Update status
-        let current_ledger = env.ledger().sequence();
-        refund_request.status = RefundStatus::Approved;
-        refund_request.updated_at = current_ledger;
-        refund_request.processed_by = Some(admin.clone());
-        refund_request.processed_at = Some(current_ledger);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundRequest(refund_id), &refund_request);
-
-        // Emit event
-        env.events().publish(
-            (symbol_short!("refund_appr"), refund_id),
-            refund_request,
-        );
+        env.events()
+            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
 
         Ok(())
     }
 
-    /// Reject a refund request.
-    ///
-    /// Only callable by the admin.
-    ///
-    /// # Arguments
-    ///
-    /// * `refund_id` — identifier of the refund request to reject.
-    /// * `reason` — reason for rejection.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::RefundRequestNotFound`] — no refund request exists.
-    /// - [`ContractError::RefundAlreadyProcessed`] — request already processed.
-    /// - [`ContractError::NotAdmin`] — caller is not the admin.
-    pub fn reject_refund_request(
-        env: Env,
-        refund_id: u64,
-        reason: String,
-    ) -> Result<(), ContractError> {
-        // Verify admin
-        let admin = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Address>(&DataKey::Admin)
-            .ok_or(ContractError::NotAdmin)?;
-        admin.require_auth();
-
-        // Get refund request
-        let mut refund_request = env
-            .storage()
-            .persistent()
-            .get::<DataKey, RefundRequest>(&DataKey::RefundRequest(refund_id))
-            .ok_or(ContractError::RefundRequestNotFound)?;
-
-        // Check not already processed
-        if refund_request.status != RefundStatus::Pending {
-            return Err(ContractError::RefundAlreadyProcessed);
-        }
-
-        // Update status
-        let current_ledger = env.ledger().sequence();
-        refund_request.status = RefundStatus::Rejected;
-        refund_request.updated_at = current_ledger;
-        refund_request.processed_by = Some(admin.clone());
-        refund_request.processed_at = Some(current_ledger);
-        refund_request.rejection_reason = Some(reason);
-
+    /// Retrieve an escrow by ID, trapping if missing.
+    pub fn get_escrow(env: Env, escrow_id: u64) -> Escrow {
         env.storage()
             .persistent()
-            .set(&DataKey::RefundRequest(refund_id), &refund_request);
-
-        // Emit event
-        env.events().publish(
-            (symbol_short!("refund_rej"), refund_id),
-            refund_request,
-        );
-
-        Ok(())
+            .get(&DataKey::Escrow(escrow_id))
+            .unwrap()
     }
-
-    /// Process an approved refund and transfer tokens back to buyer.
-    ///
-    /// This triggers the Stellar refund transaction. Only callable by admin
-    /// after refund request has been approved.
-    ///
-    /// # Arguments
-    ///
-    /// * `refund_id` — identifier of the refund request to process.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::RefundRequestNotFound`] — no refund request exists.
-    /// - [`ContractError::RefundAlreadyProcessed`] — request not in approved state.
-    /// - [`ContractError::NotAdmin`] — caller is not the admin.
-    pub fn process_refund(env: Env, refund_id: u64) -> Result<(), ContractError> {
-        // Verify admin
-        let admin = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Address>(&DataKey::Admin)
-            .ok_or(ContractError::NotAdmin)?;
-        admin.require_auth();
-
-        // Get refund request
-        let mut refund_request = env
-            .storage()
-            .persistent()
-            .get::<DataKey, RefundRequest>(&DataKey::RefundRequest(refund_id))
-            .ok_or(ContractError::RefundRequestNotFound)?;
-
-        // Must be in approved state
-        if refund_request.status != RefundStatus::Approved {
-            return Err(ContractError::RefundAlreadyProcessed);
-        }
-
-        // Get escrow
-        let mut escrow = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Escrow>(&DataKey::Escrow(refund_request.escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
-
-        // Execute the Stellar token transfer (refund transaction)
-        let token_client = token::Client::new(&env, &escrow.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &refund_request.buyer,
-            &refund_request.refund_amount,
-        );
-
-        // Update escrow amount if partial refund
-        if refund_request.refund_amount < escrow.amount {
-            escrow.amount -= refund_request.refund_amount;
-        } else {
-            // Full refund - update escrow status
-            escrow.status = EscrowStatus::Refunded;
-        }
-
-        // Persist updated escrow
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(refund_request.escrow_id), &escrow);
-
-        // Update refund request status
-        let current_ledger = env.ledger().sequence();
-        refund_request.status = RefundStatus::Completed;
-        refund_request.updated_at = current_ledger;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundRequest(refund_id), &refund_request);
-
-        // Record in refund history
-        let is_full_refund = refund_request.refund_amount >= escrow.amount;
-        let history_entry = RefundHistoryEntry {
-            refund_id,
-            escrow_id: refund_request.escrow_id,
-            amount: refund_request.refund_amount,
-            is_full_refund,
-            processed_at: current_ledger,
-            processed_by: admin,
-        };
-
-        // Add to escrow-specific history
-        let mut escrow_history: Vec<RefundHistoryEntry> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RefundHistory(refund_request.escrow_id))
-            .unwrap_or(Vec::new(&env));
-        escrow_history.push_back(history_entry.clone());
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundHistory(refund_request.escrow_id), &escrow_history);
-
-        // Add to global history
-        let mut global_history: Vec<RefundHistoryEntry> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::GlobalRefundHistory)
-            .unwrap_or(Vec::new(&env));
-        global_history.push_back(history_entry);
-        env.storage()
-            .persistent()
-            .set(&DataKey::GlobalRefundHistory, &global_history);
-
-        // Emit completion event
-        env.events().publish(
-            (symbol_short!("refund_done"), refund_id),
-            refund_request,
-        );
-
-        Ok(())
-    }
-
-    // ─── Refund History Functions ─────────────────────────────────────────────
-
-    /// Get refund history for a specific escrow.
-    pub fn get_refund_history(env: Env, escrow_id: u64) -> Vec<RefundHistoryEntry> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RefundHistory(escrow_id))
-            .unwrap_or(Vec::new(&env))
-    }
-
-    /// Get all refund history (global).
-    pub fn get_all_refund_history(env: Env) -> Vec<RefundHistoryEntry> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::GlobalRefundHistory)
-            .unwrap_or(Vec::new(&env))
-    }
-
-    /// Cancel a pending refund request (buyer can cancel before approval).
-    ///
-    /// # Arguments
-    ///
-    /// * `refund_id` — identifier of the refund request to cancel.
-    ///
-    /// # Errors
-    ///
-    /// - [`ContractError::RefundRequestNotFound`] — no refund request exists.
-    /// - [`ContractError::RefundAlreadyProcessed`] — request already processed.
-    /// - [`ContractError::Unauthorized`] — caller is not the buyer.
-    pub fn cancel_refund_request(env: Env, refund_id: u64) -> Result<(), ContractError> {
-        // Get refund request
-        let mut refund_request = env
-            .storage()
-            .persistent()
-            .get::<DataKey, RefundRequest>(&DataKey::RefundRequest(refund_id))
-            .ok_or(ContractError::RefundRequestNotFound)?;
-
-        // Check status is pending
-        if refund_request.status != RefundStatus::Pending {
-            return Err(ContractError::RefundAlreadyProcessed);
-        }
-
-        // Require buyer authorization
-        refund_request.buyer.require_auth();
-
-        // Update status
-        let current_ledger = env.ledger().sequence();
-        refund_request.status = RefundStatus::Cancelled;
-        refund_request.updated_at = current_ledger;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundRequest(refund_id), &refund_request);
-
-        // Emit event
-        env.events().publish(
-            (symbol_short!("refund_canc"), refund_id),
-            refund_request,
-        );
-
-        Ok(())
-    }
-}
 }

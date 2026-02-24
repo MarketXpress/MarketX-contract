@@ -1,13 +1,14 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
 
 mod errors;
 mod types;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowStatus, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FundsReleasedEvent, RefundHistoryEntry,
+    RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
 };
 
 #[cfg(test)]
@@ -46,8 +47,7 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        env.events()
-            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
+        Self::emit_escrow_created(&env, escrow_id, &escrow);
 
         Ok(())
     }
@@ -89,8 +89,7 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowCount, &(escrow_count + 1));
 
-        env.events()
-            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
+        Self::emit_escrow_created(&env, escrow_id, &escrow);
 
         Ok(())
     }
@@ -141,8 +140,7 @@ impl Contract {
             env.storage()
                 .persistent()
                 .set(&DataKey::Escrow(escrow_id), &escrow);
-            env.events()
-                .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
+            Self::emit_escrow_created(&env, escrow_id, &escrow);
 
             ids.push_back(escrow_id);
             j += 1;
@@ -204,10 +202,12 @@ impl Contract {
             return Err(ContractError::InvalidTransition);
         }
 
+        let previous = escrow.status.clone();
         escrow.status = EscrowStatus::Refunded;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+        Self::emit_status_change(&env, escrow_id, previous, EscrowStatus::Refunded, caller);
 
         Ok(())
     }
@@ -265,6 +265,7 @@ impl Contract {
         }
 
         let seller_payout = amount - fee;
+        let previous = escrow.status.clone();
         escrow.released_amount = new_total;
         if escrow.released_amount == escrow.amount {
             escrow.status = EscrowStatus::Released;
@@ -274,10 +275,16 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        env.events().publish(
-            (symbol_short!("escrow_rl"), escrow_id),
-            (seller_payout, fee, escrow.released_amount),
-        );
+        Self::emit_funds_released(env, escrow_id, &escrow, amount, fee, seller_payout);
+        if previous != escrow.status {
+            Self::emit_status_change(
+                env,
+                escrow_id,
+                previous,
+                escrow.status.clone(),
+                escrow.buyer.clone(),
+            );
+        }
 
         Self::exit_reentrancy_guard(env);
 
@@ -301,5 +308,63 @@ impl Contract {
 
     fn exit_reentrancy_guard(env: &Env) {
         env.storage().persistent().set(&DataKey::ReentrancyLock, &false);
+    }
+
+    fn emit_escrow_created(env: &Env, escrow_id: u64, escrow: &Escrow) {
+        env.events().publish(
+            (Symbol::new(env, "escrow_created"), escrow_id),
+            EscrowCreatedEvent {
+                escrow_id,
+                buyer: escrow.buyer.clone(),
+                seller: escrow.seller.clone(),
+                arbiter: escrow.arbiter.clone(),
+                token: escrow.token.clone(),
+                amount: escrow.amount,
+                released_amount: escrow.released_amount,
+                status: escrow.status.clone(),
+            },
+        );
+    }
+
+    fn emit_funds_released(
+        env: &Env,
+        escrow_id: u64,
+        escrow: &Escrow,
+        gross_amount: i128,
+        fee_amount: i128,
+        net_amount: i128,
+    ) {
+        env.events().publish(
+            (Symbol::new(env, "funds_released"), escrow_id),
+            FundsReleasedEvent {
+                escrow_id,
+                buyer: escrow.buyer.clone(),
+                seller: escrow.seller.clone(),
+                gross_amount,
+                fee_amount,
+                net_amount,
+                released_amount: escrow.released_amount,
+                total_amount: escrow.amount,
+                is_final_release: escrow.status == EscrowStatus::Released,
+            },
+        );
+    }
+
+    fn emit_status_change(
+        env: &Env,
+        escrow_id: u64,
+        from_status: EscrowStatus,
+        to_status: EscrowStatus,
+        actor: Address,
+    ) {
+        env.events().publish(
+            (Symbol::new(env, "status_change"), escrow_id),
+            StatusChangeEvent {
+                escrow_id,
+                from_status,
+                to_status,
+                actor,
+            },
+        );
     }
 }

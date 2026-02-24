@@ -296,3 +296,14 @@ make check
 ## License
 
 MIT
+## Event Schemas (Off-Chain Tracking)
+
+Event topics are standardized for off-chain indexing. Each event uses topic tuple `(event_name, escrow_id)` and typed payload data.
+
+| Topic | Emitted when | Payload fields |
+|---|---|---|
+| `escrow_created` | `store_escrow`, `create_escrow`, `create_bulk_escrows` | `escrow_id`, `buyer`, `seller`, `arbiter`, `token`, `amount`, `released_amount`, `status` |
+| `funds_released` | `release_escrow`, `release_partial` | `escrow_id`, `buyer`, `seller`, `gross_amount`, `fee_amount`, `net_amount`, `released_amount`, `total_amount`, `is_final_release` |
+| `status_change` | Any escrow status transition | `escrow_id`, `from_status`, `to_status`, `actor` |
+
+This schema allows indexers to reconstruct escrow creation, status transitions, and payout progression without extra reads.

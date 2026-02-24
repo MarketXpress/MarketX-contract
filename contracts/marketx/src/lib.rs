@@ -4,7 +4,7 @@ use soroban_sdk::{contract, contractimpl, Env};
 mod errors;
 mod types;
 pub use errors::ContractError;
-pub use types::{DataKey, Escrow, EscrowStatus};
+pub use types::{DataKey, Escrow, EscrowStatus, EscrowStatusUpdated};
 
 #[contract]
 pub struct Contract;
@@ -28,6 +28,8 @@ impl Contract {
 
     /// Transition an escrow to a new status, enforcing the valid state graph.
     ///
+    /// Emits an `EscrowStatusUpdated` event on successful transition.
+    ///
     /// Errors:
     /// - `ContractError::EscrowNotFound`   — no record for `escrow_id`
     /// - `ContractError::InvalidTransition` — move not permitted from current state
@@ -46,10 +48,21 @@ impl Contract {
             return Err(ContractError::InvalidTransition);
         }
 
-        escrow.status = new_status;
+        let old_status = escrow.status.clone();
+        escrow.status = new_status.clone();
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        // Emit the status update event
+        env.events().publish(
+            ("EscrowStatusUpdated",),
+            EscrowStatusUpdated {
+                escrow_id,
+                old_status,
+                new_status,
+            },
+        );
 
         Ok(())
     }

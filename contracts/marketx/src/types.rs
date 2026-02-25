@@ -73,6 +73,42 @@ pub struct Escrow {
     pub allow_partial_refund: bool,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct EscrowCreatedEvent {
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub seller: Address,
+    pub arbiter: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub released_amount: i128,
+    pub status: EscrowStatus,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct FundsReleasedEvent {
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub seller: Address,
+    pub gross_amount: i128,
+    pub fee_amount: i128,
+    pub net_amount: i128,
+    pub released_amount: i128,
+    pub total_amount: i128,
+    pub is_final_release: bool,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct StatusChangeEvent {
+    pub escrow_id: u64,
+    pub from_status: EscrowStatus,
+    pub to_status: EscrowStatus,
+    pub actor: Address,
+}
+
 /// Event emitted when an escrow's status changes.
 #[contracttype]
 #[derive(Clone, Debug)]

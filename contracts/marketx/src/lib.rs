@@ -1,3 +1,9 @@
+use soroban_sdk::{contract, contractimpl, Env, Address, Symbol};
+
+#[contract]
+pub struct MarketXContract;
+
+
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
@@ -6,6 +12,8 @@ use soroban_sdk::{contracttype};
 
 mod errors;
 mod types;
+
+
 
 pub use errors::ContractError;
 pub use types::{
@@ -64,6 +72,21 @@ impl Contract {
 
         Ok(())
     }
+
+    #[contractimpl]
+impl MarketXContract {
+    pub fn init(env: Env, admin: Address) {
+        env.storage().instance().set(&Symbol::new(&env, "admin"), &admin);
+    }
+
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&Symbol::new(&env, "admin")).unwrap();
+        admin.require_auth();
+
+        // Update contract code reference
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
+}
 
     /// Retrieve an escrow record by ID.
     ///

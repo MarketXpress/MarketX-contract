@@ -695,3 +695,22 @@ fn test_project_creation() {
     };
     assert_eq!(project.amount, 1000);
 }
+
+fn test_upgrade_preserves_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::random(&env);
+    MarketXContract::init(env.clone(), admin.clone());
+
+    // Set state
+    MarketXContract::set_project(env.clone(), 1, admin.clone());
+    assert_eq!(MarketXContract::get_project(env.clone(), 1), Some(admin.clone()));
+
+    // Upgrade contract
+    let new_wasm_hash = BytesN::<32>::random(&env);
+    MarketXContract::upgrade(env.clone(), new_wasm_hash);
+
+    // State should still be intact
+    assert_eq!(MarketXContract::get_project(env.clone(), 1), Some(admin.clone()));
+}

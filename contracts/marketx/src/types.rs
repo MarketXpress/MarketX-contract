@@ -142,6 +142,7 @@ pub enum DataKey {
     GlobalRefundHistory,
     InitialValue,
 }
+}
     /// Vector of all escrow IDs for pagination.
     EscrowIds,
 }

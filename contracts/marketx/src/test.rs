@@ -678,3 +678,20 @@ fn test_reentrancy_guard_blocks_nested_release() {
     let result = client.try_simulate_reentrant_release(&1u64);
     assert_eq!(result, Err(Ok(ContractError::ReentrancyDetected)));
 }
+
+#[test]
+fn test_project_storage_size() {
+    use std::mem::size_of;
+    assert!(size_of::<Project>() <= 32, "Project struct too large");
+}
+
+#[test]
+fn test_project_creation() {
+    let project = Project {
+        id: 1,
+        owner: Address::random(),
+        created_at: 1_700_000_000,
+        amount: 1000,
+    };
+    assert_eq!(project.amount, 1000);
+}

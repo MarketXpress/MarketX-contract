@@ -307,3 +307,10 @@ Event topics are standardized for off-chain indexing. Each event uses topic tupl
 | `status_change` | Any escrow status transition | `escrow_id`, `from_status`, `to_status`, `actor` |
 
 This schema allows indexers to reconstruct escrow creation, status transitions, and payout progression without extra reads.
+
+## Upgrade Process
+
+1. Deploy new contract WASM to the network.
+2. Call `upgrade(new_wasm_hash)` from the admin account.
+3. Contract code is swapped, but state stored in ledger remains intact.
+4. Verify state after upgrade with `get_*` functions.

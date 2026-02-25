@@ -1,6 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{contracttype};
+
 
 mod errors;
 mod types;
@@ -654,6 +656,15 @@ impl Contract {
             .get(&DataKey::FeeBps)
             .unwrap_or(0)
     }
+
+
+#[contracttype]
+pub struct Project {
+    pub id: u32,
+    pub owner: Address,
+    pub created_at: u32,
+    pub amount: u64,
+}
 
     // ─── Refund Request Functions ───────────────────────────────────────────
 

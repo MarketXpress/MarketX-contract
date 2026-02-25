@@ -1,13 +1,14 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol, Vec};
 
 mod errors;
 mod types;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowStatus, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FundsReleasedEvent, RefundHistoryEntry,
+    RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
 };
 
 #[cfg(test)]
@@ -46,8 +47,8 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        env.events()
-            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
+        Self::emit_escrow_created(&env, escrow_id, &escrow);
+
         // Track escrow ID for pagination
         let mut escrow_ids: Vec<u64> = env
             .storage()
@@ -59,10 +60,6 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowIds, &escrow_ids);
 
-        env.events().publish(
-            (symbol_short!("escrow_cr"), escrow_id),
-            escrow,
-        );
         Ok(())
     }
 
@@ -218,53 +215,19 @@ impl Contract {
     /// - [`ContractError::EscrowNotFound`]  — no record for `escrow_id`.
     /// - [`ContractError::EscrowNotFunded`] — escrow is not in `Pending` state.
     pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
-        let mut escrow = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Escrow>(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let escrow = Self::get_escrow_or_err(&env, escrow_id)?;
+        escrow.buyer.require_auth();
 
         if escrow.status != EscrowStatus::Pending {
             return Err(ContractError::EscrowNotFunded);
         }
 
-        escrow.buyer.require_auth();
-
-        let fee_bps: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeBps)
-            .unwrap_or(0);
-
-        let fee_collector: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeCollector)
-            .unwrap();
-
-        // Integer arithmetic: fee_bps is at most 10_000, amount is i128.
-        // Cast fee_bps to i128 to avoid overflow in the multiplication.
-        let fee_amount = escrow.amount * fee_bps as i128 / 10_000;
-        let seller_amount = escrow.amount - fee_amount;
-
-        let token_client = token::Client::new(&env, &escrow.token);
-        let contract_address = env.current_contract_address();
-
-        // Transfer seller's share first; if this traps the status never flips.
-        token_client.transfer(&contract_address, &escrow.seller, &seller_amount);
-
-        // Transfer platform fee only when non-zero (avoids a no-op token call).
-        if fee_amount > 0 {
-            token_client.transfer(&contract_address, &fee_collector, &fee_amount);
+        let remaining = escrow.amount - escrow.released_amount;
+        if remaining <= 0 {
+            return Err(ContractError::InvalidReleaseAmount);
         }
 
-        // Status advances only after all transfers succeed.
-        escrow.status = EscrowStatus::Released;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(escrow_id), &escrow);
-
-        Ok(())
+        Self::release_amount(&env, escrow_id, escrow, remaining)
     }
 
     /// Return the full escrowed amount to the buyer.
@@ -310,12 +273,6 @@ impl Contract {
         match &escrow.status {
             EscrowStatus::Pending => {
                 // From Pending, either the buyer or seller may initiate a refund.
-                // The seller path covers voluntary order cancellation; the buyer
-                // path covers pre-dispute cancellation. The idiomatic Soroban
-                // pattern for "caller is one of two addresses" is to receive the
-                // initiator as a parameter, validate it against the allowed set,
-                // then call require_auth() on it — which proves the initiator
-                // signed this invocation.
                 if initiator != escrow.buyer && initiator != escrow.seller {
                     return Err(ContractError::Unauthorized);
                 }
@@ -342,10 +299,13 @@ impl Contract {
         );
 
         // Status advances only after the transfer succeeds.
+        let previous = escrow.status.clone();
         escrow.status = EscrowStatus::Refunded;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        Self::emit_status_change(&env, escrow_id, previous, EscrowStatus::Refunded, initiator);
 
         Ok(())
     }
@@ -356,9 +316,6 @@ impl Contract {
     ///
     /// Emits an `EscrowStatusUpdated` event on successful transition.
     ///
-    /// Errors:
-    /// - `ContractError::EscrowNotFound`   — no record for `escrow_id`
-    /// - `ContractError::InvalidTransition` — move not permitted from current state
     /// This is the low-level state-mutation helper used for status-only changes
     /// (e.g. `Pending → Disputed`). Token-bearing transitions (`Released`,
     /// `Refunded`) should use [`release_escrow`] and [`refund_escrow`]
@@ -406,10 +363,10 @@ impl Contract {
         }
 
         let old_status = escrow.status.clone();
-        escrow.status = new_status.clone();
+
         // Require buyer authorization for buyer-initiated transitions.
         if matches!(
-            (&escrow.status, &new_status),
+            (&old_status, &new_status),
             (EscrowStatus::Pending, EscrowStatus::Released)
                 | (EscrowStatus::Pending, EscrowStatus::Disputed)
                 | (EscrowStatus::Pending, EscrowStatus::Refunded)
@@ -418,18 +375,36 @@ impl Contract {
             escrow.buyer.require_auth();
         }
 
+        escrow.status = new_status.clone();
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        Self::emit_status_change(&env, escrow_id, old_status, new_status, escrow.buyer.clone());
+
         Ok(())
     }
 
-    #[allow(deprecated)]
-    pub fn create_escrow(
+    /// Resolve a disputed escrow as arbiter.
+    ///
+    /// Requires arbiter authorization. The escrow must be in `Disputed` state.
+    /// Resolution must be either `Released` or `Refunded`.
+    ///
+    /// # Arguments
+    ///
+    /// * `escrow_id`  — identifier of the escrow to resolve.
+    /// * `resolution` — target status: `Released` or `Refunded`.
+    ///
+    /// # Errors
+    ///
+    /// - [`ContractError::EscrowNotFound`]    — no record for `escrow_id`.
+    /// - [`ContractError::InvalidTransition`] — escrow is not `Disputed`, or
+    ///   resolution is not `Released`/`Refunded`.
+    pub fn resolve_dispute(
         env: Env,
         escrow_id: u64,
-        buyer: Address,
-        seller: Address,
-        amount: i128,
+        resolution: EscrowStatus,
     ) -> Result<(), ContractError> {
-        if amount <= 0 {
         let mut escrow: Escrow = env
             .storage()
             .persistent()
@@ -449,37 +424,152 @@ impl Contract {
             return Err(ContractError::InvalidTransition);
         }
 
-        escrow.status = resolution;
+        let old_status = escrow.status.clone();
+        escrow.status = resolution.clone();
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        // Emit the status update event
-        env.events().publish(
-            ("EscrowStatusUpdated",),
-            EscrowStatusUpdated {
-                escrow_id,
-                old_status,
-                new_status,
-            },
-        );
+        Self::emit_status_change(&env, escrow_id, old_status, resolution, escrow.arbiter.clone());
 
         Ok(())
     }
 
-    /// Initialize the contract with an initial value.
-    pub fn initialize(env: Env, initial_value: u32) {
+    #[allow(deprecated)]
+    pub fn create_escrow(
+        env: Env,
+        escrow_id: u64,
+        buyer: Address,
+        seller: Address,
+        amount: i128,
+    ) -> Result<(), ContractError> {
+        if amount <= 0 {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        let escrow = Escrow {
+            buyer,
+            seller,
+            arbiter: env.current_contract_address(),
+            token: env.current_contract_address(),
+            amount,
+            released_amount: 0,
+            status: EscrowStatus::Pending,
+            refund_deadline: 0,
+            allow_partial_refund: false,
+        };
+
         env.storage()
             .persistent()
-            .set(&DataKey::InitialValue, &initial_value);
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        let escrow_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowCount, &(escrow_count + 1));
+
+        Self::emit_escrow_created(&env, escrow_id, &escrow);
+
+        Ok(())
     }
 
-    /// Get the initial value.
-    pub fn get_initial_value(env: Env) -> u32 {
+    #[allow(deprecated)]
+    pub fn create_bulk_escrows(
+        env: Env,
+        buyers: Vec<Address>,
+        sellers: Vec<Address>,
+        amounts: Vec<i128>,
+    ) -> Result<Vec<u64>, ContractError> {
+        let len = buyers.len();
+        if len != sellers.len() || len != amounts.len() {
+            return Err(ContractError::LengthMismatch);
+        }
+
+        let mut i: u32 = 0;
+        while i < len {
+            let amount = amounts.get(i).unwrap();
+            if amount <= 0 {
+                return Err(ContractError::InvalidEscrowAmount);
+            }
+            i += 1;
+        }
+
+        let mut ids: Vec<u64> = Vec::new(&env);
+        let start: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCount)
+            .unwrap_or(0);
+
+        let mut j: u32 = 0;
+        while j < len {
+            let escrow_id = start + j as u64 + 1;
+            let escrow = Escrow {
+                buyer: buyers.get(j).unwrap(),
+                seller: sellers.get(j).unwrap(),
+                arbiter: env.current_contract_address(),
+                token: env.current_contract_address(),
+                amount: amounts.get(j).unwrap(),
+                released_amount: 0,
+                status: EscrowStatus::Pending,
+                refund_deadline: 0,
+                allow_partial_refund: false,
+            };
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Escrow(escrow_id), &escrow);
+            Self::emit_escrow_created(&env, escrow_id, &escrow);
+
+            ids.push_back(escrow_id);
+            j += 1;
+        }
+
         env.storage()
             .persistent()
-            .get(&DataKey::InitialValue)
-            .unwrap_or(0)
+            .set(&DataKey::EscrowCount, &(start + len as u64));
+
+        Ok(ids)
+    }
+
+    pub fn release_partial(env: Env, escrow_id: u64, amount: i128) -> Result<(), ContractError> {
+        let escrow = Self::get_escrow_or_err(&env, escrow_id)?;
+        escrow.buyer.require_auth();
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::EscrowNotFunded);
+        }
+
+        Self::release_amount(&env, escrow_id, escrow, amount)
+    }
+
+    pub fn seller_refund(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let mut escrow = Self::get_escrow_or_err(&env, escrow_id)?;
+        if caller != escrow.seller {
+            return Err(ContractError::Unauthorized);
+        }
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidTransition);
+        }
+
+        let previous = escrow.status.clone();
+        escrow.status = EscrowStatus::Refunded;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+        Self::emit_status_change(&env, escrow_id, previous, EscrowStatus::Refunded, caller);
+
+        Ok(())
     }
 
     // ─── Admin Functions ─────────────────────────────────────────────────────
@@ -501,7 +591,7 @@ impl Contract {
         if let Some(current_admin) = env.storage().persistent().get::<DataKey, Address>(&DataKey::Admin) {
             current_admin.require_auth();
         }
-        
+
         env.storage()
             .persistent()
             .set(&DataKey::Admin, &admin);
@@ -545,14 +635,12 @@ impl Contract {
             return Err(ContractError::InvalidFeeConfig);
         }
 
-        // Store the new fee
         env.storage()
             .persistent()
             .set(&DataKey::FeeBps, &fee_bps);
 
-        // Emit event for fee change
         env.events().publish(
-            symbol_short!("fee_chg"),
+            (Symbol::new(&env, "fee_changed"),),
             fee_bps,
         );
 
@@ -610,153 +698,44 @@ impl Contract {
             return Err(ContractError::InvalidEscrowAmount);
         }
 
-        let escrow = Escrow {
-            buyer,
-            seller,
-            arbiter: env.current_contract_address(),
-            token: env.current_contract_address(),
-            amount,
-            released_amount: 0,
-            status: EscrowStatus::Pending,
-            refund_deadline: 0,
-            allow_partial_refund: false,
+        // Validate refund amount does not exceed escrow amount
+        if refund_amount > escrow.amount {
+            return Err(ContractError::RefundAmountExceedsEscrow);
+        }
+
+        // Validate refund deadline has not passed
+        if escrow.refund_deadline > 0 && env.ledger().timestamp() > escrow.refund_deadline {
+            return Err(ContractError::RefundWindowExpired);
+        }
+
+        // Generate a new request ID
+        let request_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundRequestCount)
+            .unwrap_or(0);
+        let request_id = request_count + 1;
+
+        let request = RefundRequest {
+            escrow_id,
+            refund_amount,
+            reason,
+            description,
+            status: RefundStatus::Pending,
+            created_at: env.ledger().timestamp(),
         };
 
         env.storage()
             .persistent()
-            .set(&DataKey::Escrow(escrow_id), &escrow);
-
-        let escrow_count: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowCount)
-            .unwrap_or(0);
+            .set(&DataKey::RefundRequest(request_id), &request);
         env.storage()
             .persistent()
-            .set(&DataKey::EscrowCount, &(escrow_count + 1));
+            .set(&DataKey::RefundRequestCount, &request_id);
 
-        env.events()
-            .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
-
-        Ok(())
+        Ok(request_id)
     }
 
-    #[allow(deprecated)]
-    pub fn create_bulk_escrows(
-        env: Env,
-        buyers: Vec<Address>,
-        sellers: Vec<Address>,
-        amounts: Vec<i128>,
-    ) -> Result<Vec<u64>, ContractError> {
-        let len = buyers.len();
-        if len != sellers.len() || len != amounts.len() {
-            return Err(ContractError::LengthMismatch);
-        }
-
-        let mut i: u32 = 0;
-        while i < len {
-            let amount = amounts.get(i).unwrap();
-            if amount <= 0 {
-                return Err(ContractError::InvalidEscrowAmount);
-            }
-            i += 1;
-        }
-
-        let mut ids: Vec<u64> = Vec::new(&env);
-        let start: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowCount)
-            .unwrap_or(0);
-
-        let mut j: u32 = 0;
-        while j < len {
-            let escrow_id = start + j as u64 + 1;
-            let escrow = Escrow {
-                buyer: buyers.get(j).unwrap(),
-                seller: sellers.get(j).unwrap(),
-                arbiter: env.current_contract_address(),
-                token: env.current_contract_address(),
-                amount: amounts.get(j).unwrap(),
-                released_amount: 0,
-                status: EscrowStatus::Pending,
-                refund_deadline: 0,
-                allow_partial_refund: false,
-            };
-
-            env.storage()
-                .persistent()
-                .set(&DataKey::Escrow(escrow_id), &escrow);
-            env.events()
-                .publish((symbol_short!("escrow_cr"), escrow_id), escrow);
-
-            ids.push_back(escrow_id);
-            j += 1;
-        }
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowCount, &(start + len as u64));
-
-        Ok(ids)
-    }
-
-    pub fn get_escrow(env: Env, escrow_id: u64) -> Escrow {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .unwrap()
-    }
-
-    pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
-        let escrow = Self::get_escrow_or_err(&env, escrow_id)?;
-        escrow.buyer.require_auth();
-
-        if escrow.status != EscrowStatus::Pending {
-            return Err(ContractError::EscrowNotFunded);
-        }
-
-        let remaining = escrow.amount - escrow.released_amount;
-        if remaining <= 0 {
-            return Err(ContractError::InvalidReleaseAmount);
-        }
-
-        Self::release_amount(&env, escrow_id, escrow, remaining)
-    }
-
-    pub fn release_partial(env: Env, escrow_id: u64, amount: i128) -> Result<(), ContractError> {
-        let escrow = Self::get_escrow_or_err(&env, escrow_id)?;
-        escrow.buyer.require_auth();
-
-        if escrow.status != EscrowStatus::Pending {
-            return Err(ContractError::EscrowNotFunded);
-        }
-
-        Self::release_amount(&env, escrow_id, escrow, amount)
-    }
-
-    pub fn seller_refund(
-        env: Env,
-        escrow_id: u64,
-        caller: Address,
-    ) -> Result<(), ContractError> {
-        caller.require_auth();
-
-        let mut escrow = Self::get_escrow_or_err(&env, escrow_id)?;
-        if caller != escrow.seller {
-            return Err(ContractError::Unauthorized);
-        }
-        if escrow.status != EscrowStatus::Pending {
-            return Err(ContractError::InvalidTransition);
-        }
-
-        escrow.status = EscrowStatus::Refunded;
-        env.storage()
-            .persistent()
-            .set(&DataKey::Escrow(escrow_id), &escrow);
-
-        Ok(())
-    }
+    // ─── Reentrancy Guard ────────────────────────────────────────────────────
 
     // Test helper to simulate a malicious nested call attempt.
     pub fn simulate_reentrant_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
@@ -811,6 +790,7 @@ impl Contract {
         }
 
         let seller_payout = amount - fee;
+        let previous = escrow.status.clone();
         escrow.released_amount = new_total;
         if escrow.released_amount == escrow.amount {
             escrow.status = EscrowStatus::Released;
@@ -820,10 +800,16 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        env.events().publish(
-            (symbol_short!("escrow_rl"), escrow_id),
-            (seller_payout, fee, escrow.released_amount),
-        );
+        Self::emit_funds_released(env, escrow_id, &escrow, amount, fee, seller_payout);
+        if previous != escrow.status {
+            Self::emit_status_change(
+                env,
+                escrow_id,
+                previous,
+                escrow.status.clone(),
+                escrow.buyer.clone(),
+            );
+        }
 
         Self::exit_reentrancy_guard(env);
 
@@ -847,5 +833,65 @@ impl Contract {
 
     fn exit_reentrancy_guard(env: &Env) {
         env.storage().persistent().set(&DataKey::ReentrancyLock, &false);
+    }
+
+    // ─── Event Emitters ──────────────────────────────────────────────────────
+
+    fn emit_escrow_created(env: &Env, escrow_id: u64, escrow: &Escrow) {
+        env.events().publish(
+            (Symbol::new(env, "escrow_created"), escrow_id),
+            EscrowCreatedEvent {
+                escrow_id,
+                buyer: escrow.buyer.clone(),
+                seller: escrow.seller.clone(),
+                arbiter: escrow.arbiter.clone(),
+                token: escrow.token.clone(),
+                amount: escrow.amount,
+                released_amount: escrow.released_amount,
+                status: escrow.status.clone(),
+            },
+        );
+    }
+
+    fn emit_funds_released(
+        env: &Env,
+        escrow_id: u64,
+        escrow: &Escrow,
+        gross_amount: i128,
+        fee_amount: i128,
+        net_amount: i128,
+    ) {
+        env.events().publish(
+            (Symbol::new(env, "funds_released"), escrow_id),
+            FundsReleasedEvent {
+                escrow_id,
+                buyer: escrow.buyer.clone(),
+                seller: escrow.seller.clone(),
+                gross_amount,
+                fee_amount,
+                net_amount,
+                released_amount: escrow.released_amount,
+                total_amount: escrow.amount,
+                is_final_release: escrow.status == EscrowStatus::Released,
+            },
+        );
+    }
+
+    fn emit_status_change(
+        env: &Env,
+        escrow_id: u64,
+        from_status: EscrowStatus,
+        to_status: EscrowStatus,
+        actor: Address,
+    ) {
+        env.events().publish(
+            (Symbol::new(env, "status_change"), escrow_id),
+            StatusChangeEvent {
+                escrow_id,
+                from_status,
+                to_status,
+                actor,
+            },
+        );
     }
 }

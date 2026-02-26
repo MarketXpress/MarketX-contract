@@ -32,6 +32,9 @@ pub enum DataKey {
 
     // Escrow uniqueness hash (buyer + seller + metadata hash -> escrow_id)
     EscrowHash(BytesN<32>),
+
+    // Analytics
+    TotalFundedAmount,
 }
 
 /// Maximum metadata size in bytes (1 KB)

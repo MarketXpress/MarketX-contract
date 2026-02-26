@@ -34,4 +34,7 @@ pub enum ContractError {
 
     // Metadata
     MetadataTooLarge = 60,
+
+    // Duplicates
+    DuplicateEscrow = 70,
 }

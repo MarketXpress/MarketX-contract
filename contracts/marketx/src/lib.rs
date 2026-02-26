@@ -134,4 +134,43 @@ impl Contract {
         // existing dispute resolution logic here
         Ok(())
     }
+
+    impl Contract {
+    fn next_escrow_id(env: &Env) -> Result<u64, ContractError> {
+        let current: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0);
+
+        let next = current
+            .checked_add(1)
+            .ok_or(ContractError::EscrowIdOverflow)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowCounter, &next);
+
+        Ok(next)
+    }
+}
+pub fn initialize(
+    env: Env,
+    admin: Address,
+    fee_collector: Address,
+    fee_bps: u32,
+) {
+    admin.require_auth();
+
+    env.storage().persistent().set(&DataKey::Admin, &admin);
+    env.storage().persistent().set(&DataKey::FeeCollector, &fee_collector);
+    env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+
+    // 🔢 Counter starts at 0
+    env.storage().persistent().set(&DataKey::EscrowCounter, &0u64);
+
+    // Circuit breaker default
+    env.storage().persistent().set(&DataKey::Paused, &false);
+}
+
 }

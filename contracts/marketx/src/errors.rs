@@ -2,6 +2,7 @@ use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+
 pub enum ContractError {
     // Auth
     NotAdmin = 1,
@@ -21,4 +22,24 @@ pub enum ContractError {
 
     // 🔒 Circuit Breaker
     ContractPaused = 16,
+}
+
+
+pub enum ContractError {
+    // Auth
+    NotAdmin = 1,
+
+    // Escrow
+    EscrowNotFound = 10,
+    InvalidEscrowState = 11,
+
+    // Refunds
+    RefundAlreadyRequested = 13,
+
+    // Security
+    ReentrancyDetected = 15,
+    ContractPaused = 16,
+
+    // 🔢 Counter
+    EscrowIdOverflow = 17,
 }

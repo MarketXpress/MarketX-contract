@@ -11,4 +11,4 @@ This directory contains sample code for interacting with the MarketX smart contr
 1. Navigate to `contracts/marketx/examples/`.
 2. Start a simple HTTP server:
    ```bash
-   npx serve .
+   npx serve

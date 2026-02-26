@@ -3,10 +3,12 @@ use soroban_sdk::contracttype;
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    // Escrow core
+    // Escrow storage
     Escrow(u64),
-    EscrowCount,
     EscrowIds,
+
+    // 🔢 Escrow Counter
+    EscrowCounter,
 
     // Fees
     FeeCollector,
@@ -16,6 +18,7 @@ pub enum DataKey {
     // Security
     ReentrancyLock,
     Admin,
+    Paused,
 
     // Refunds
     RefundRequest(u64),
@@ -23,7 +26,4 @@ pub enum DataKey {
     EscrowRefunds(u64),
     RefundHistory(u64),
     GlobalRefundHistory,
-
-    // 🔒 Circuit Breaker
-    Paused,
 }

@@ -2,7 +2,6 @@ use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-
 pub enum ContractError {
     // Auth
     NotAdmin = 1,
@@ -12,54 +11,27 @@ pub enum ContractError {
     EscrowNotFound = 10,
     InvalidEscrowState = 11,
     InsufficientBalance = 12,
+    InvalidEscrowAmount = 13,
+    InvalidTransition = 14,
+    RefundAmountExceedsEscrow = 15,
+    RefundWindowExpired = 16,
 
     // Refunds
-    RefundAlreadyRequested = 13,
-    RefundNotFound = 14,
+    RefundAlreadyRequested = 20,
+    RefundNotFound = 21,
 
     // Security
-    ReentrancyDetected = 15,
+    ReentrancyDetected = 30,
 
     // 🔒 Circuit Breaker
-    ContractPaused = 16,
-}
-
-
-pub enum ContractError {
-    // Auth
-    NotAdmin = 1,
-
-    // Escrow
-    EscrowNotFound = 10,
-    InvalidEscrowState = 11,
-
-    // Refunds
-    RefundAlreadyRequested = 13,
-
-    // Security
-    ReentrancyDetected = 15,
-    ContractPaused = 16,
+    ContractPaused = 31,
 
     // 🔢 Counter
-    EscrowIdOverflow = 17,
+    EscrowIdOverflow = 40,
 
-    pub enum ContractError {
-    // Auth
-    NotAdmin = 1,
-    Unauthorized = 2,
+    // Fee
+    InvalidFeeConfig = 50,
 
-    // Escrow
-    EscrowNotFound = 10,
-    InvalidEscrowState = 11,
-    InsufficientBalance = 12,
-
-    // Refunds
-    RefundAlreadyRequested = 13,
-    RefundNotFound = 14,
-
-    // Security
-    ReentrancyDetected = 15,
-
-    // 🔒 Circuit Breaker
-    ContractPaused = 16,
+    // Metadata
+    MetadataTooLarge = 60,
 }

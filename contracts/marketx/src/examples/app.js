@@ -1,4 +1,3 @@
-// Utility to log output
 function log(msg) {
   document.getElementById("output").textContent += msg + "\n";
 }

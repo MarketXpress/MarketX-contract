@@ -1,27 +1,3 @@
-    InitialValue,
-}
-
-pub struct Project {
-    pub id: String,
-    pub owner: Address,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub amount: u128,
-}
-
-}
-    /// Vector of all escrow IDs for pagination.
-    EscrowIds,
-}
-
-pub struct Project {
-    pub id: String,
-    pub owner: Address,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub amount: u128,
->>>>>>> f52d546813b823710d3b5660b191d47bbfa58421
-}
 use soroban_sdk::{contracttype, Address, Bytes};
 
 #[contracttype]
@@ -141,29 +117,4 @@ pub struct RefundHistoryEntry {
     pub escrow_id: u64,
     pub amount: i128,
     pub refunded_at: u64,
-}
-=======
-    InitialValue,
-}
-
-pub struct Project {
-    pub id: String,
-    pub owner: Address,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub amount: u128,
-}
-
-}
-    /// Vector of all escrow IDs for pagination.
-    EscrowIds,
-}
-
-pub struct Project {
-    pub id: String,
-    pub owner: Address,
-    pub created_at: u64,
-    pub updated_at: u64,
-    pub amount: u128,
->>>>>>> f52d546813b823710d3b5660b191d47bbfa58421
 }

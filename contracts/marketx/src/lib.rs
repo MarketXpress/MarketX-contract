@@ -75,6 +75,51 @@ impl Contract {
         }
         Ok(())
     }
+
+    /// Generate a unique hash for an escrow based on buyer, seller, and metadata.
+    /// This hash is used to prevent duplicate escrows.
+    fn generate_escrow_hash(
+        env: &Env,
+        buyer: &Address,
+        seller: &Address,
+        metadata: &Option<Bytes>,
+    ) -> BytesN<32> {
+        let mut hasher = env.crypto().sha256();
+        
+        // Add buyer to hash
+        hasher.update(&buyer.to_xdr(env));
+        
+        // Add seller to hash
+        hasher.update(&seller.to_xdr(env));
+        
+        // Add metadata to hash (if present)
+        if let Some(ref data) = metadata {
+            hasher.update(data);
+        }
+        
+        hasher.finalize()
+    }
+
+    /// Check if an escrow with the same buyer, seller, and metadata already exists.
+    fn check_duplicate_escrow(
+        env: &Env,
+        buyer: &Address,
+        seller: &Address,
+        metadata: &Option<Bytes>,
+    ) -> Result<(), ContractError> {
+        let hash = Self::generate_escrow_hash(env, buyer, seller, metadata);
+        
+        let existing: Option<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowHash(hash));
+        
+        if existing.is_some() {
+            return Err(ContractError::DuplicateEscrow);
+        }
+        
+        Ok(())
+    }
 }
 
 #[contractimpl]
@@ -140,6 +185,7 @@ impl Contract {
     ///
     /// # Errors
     /// * `MetadataTooLarge` - If metadata exceeds 1KB
+    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
     pub fn create_escrow(
         env: Env,
         buyer: Address,
@@ -159,6 +205,9 @@ impl Contract {
             return Err(ContractError::InvalidEscrowAmount);
         }
 
+        // Check for duplicate escrow
+        Self::check_duplicate_escrow(&env, &buyer, &seller, &metadata)?;
+
         let escrow_id = Self::next_escrow_id(&env)?;
 
         let escrow = Escrow {
@@ -167,12 +216,18 @@ impl Contract {
             token: token.clone(),
             amount,
             status: EscrowStatus::Pending,
-            metadata,
+            metadata: metadata.clone(),
         };
 
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        // Store the hash to prevent duplicates
+        let hash = Self::generate_escrow_hash(&env, &buyer, &seller, &metadata);
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowHash(hash), &escrow_id);
 
         // Track escrow ID for pagination
         let mut escrow_ids: Vec<u64> = env

@@ -333,3 +333,33 @@ fn test_escrow_hash_stored_correctly() {
     assert_eq!(escrow.metadata, metadata);
 }
 
+// =========================
+// ANALYTICS TESTS
+// =========================
+
+#[test]
+fn test_analytics_aggregation() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    // Initially zero
+    assert_eq!(client.get_total_escrows(), 0);
+    assert_eq!(client.get_total_funded_amount(), 0);
+
+    // Create some escrows
+    client.create_escrow(&buyer, &seller, &token, &1000, &None);
+    client.create_escrow(&buyer, &seller, &token, &2500, &Some(Bytes::from_slice(&env, b"meta1")));
+    client.create_escrow(&buyer, &seller, &token, &500, &Some(Bytes::from_slice(&env, b"meta2")));
+
+    // Verify analytics
+    assert_eq!(client.get_total_escrows(), 3);
+    assert_eq!(client.get_total_funded_amount(), 4000);
+}
+
+

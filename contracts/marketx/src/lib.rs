@@ -145,6 +145,9 @@ impl Contract {
 
         // 🔢 Counter starts at 0
         env.storage().persistent().set(&DataKey::EscrowCounter, &0u64);
+        
+        // 📊 Analytics initialization
+        env.storage().persistent().set(&DataKey::TotalFundedAmount, &0i128);
     }
 
     // =========================
@@ -229,6 +232,10 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
+        // Update total funded amount
+        let current_total: i128 = env.storage().persistent().get(&DataKey::TotalFundedAmount).unwrap_or(0);
+        env.storage().persistent().set(&DataKey::TotalFundedAmount, &(current_total + amount));
+
         // Track escrow ID for pagination
         let mut escrow_ids: Vec<u64> = env
             .storage()
@@ -272,6 +279,26 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id));
         
         escrow.and_then(|e| e.metadata)
+    }
+
+    // =========================
+    // 📊 ANALYTIC VIEWS
+    // =========================
+
+    /// Get the total number of escrows created.
+    pub fn get_total_escrows(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0)
+    }
+
+    /// Get the total amount of funds that have been put into escrow.
+    pub fn get_total_funded_amount(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalFundedAmount)
+            .unwrap_or(0)
     }
 
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {

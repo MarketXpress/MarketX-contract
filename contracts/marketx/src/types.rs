@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes};
+use soroban_sdk::{contracttype, Address, Bytes, BytesN};
 
 #[contracttype]
 #[derive(Clone)]
@@ -29,6 +29,9 @@ pub enum DataKey {
 
     // Initial value for testing
     InitialValue,
+
+    // Escrow uniqueness hash (buyer + seller + metadata hash -> escrow_id)
+    EscrowHash(BytesN<32>),
 }
 
 /// Maximum metadata size in bytes (1 KB)

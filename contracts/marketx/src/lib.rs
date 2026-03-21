@@ -1,14 +1,14 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 mod errors;
 mod types;
 
-use errors::ContractError;
-use types::{
+use soroban_sdk::xdr::ToXdr;
+
+pub use errors::ContractError;
+pub use types::{
     DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FundsReleasedEvent, RefundHistoryEntry,
     RefundReason, RefundRequest, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
 };
@@ -84,20 +84,20 @@ impl Contract {
         seller: &Address,
         metadata: &Option<Bytes>,
     ) -> BytesN<32> {
-        let mut hasher = env.crypto().sha256();
-        
+        let mut bytes = Bytes::new(env);
+
         // Add buyer to hash
-        hasher.update(&buyer.to_xdr(env));
-        
+        bytes.append(&buyer.to_xdr(env));
+
         // Add seller to hash
-        hasher.update(&seller.to_xdr(env));
-        
+        bytes.append(&seller.to_xdr(env));
+
         // Add metadata to hash (if present)
         if let Some(ref data) = metadata {
-            hasher.update(data);
+            bytes.append(data);
         }
-        
-        hasher.finalize()
+
+        env.crypto().sha256(&bytes).into()
     }
 
     /// Check if an escrow with the same buyer, seller, and metadata already exists.
@@ -108,16 +108,13 @@ impl Contract {
         metadata: &Option<Bytes>,
     ) -> Result<(), ContractError> {
         let hash = Self::generate_escrow_hash(env, buyer, seller, metadata);
-        
-        let existing: Option<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowHash(hash));
-        
+
+        let existing: Option<u64> = env.storage().persistent().get(&DataKey::EscrowHash(hash));
+
         if existing.is_some() {
             return Err(ContractError::DuplicateEscrow);
         }
-        
+
         Ok(())
     }
 }
@@ -128,26 +125,27 @@ impl Contract {
     // 🚀 INITIALIZATION
     // =========================
 
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        fee_collector: Address,
-        fee_bps: u32,
-    ) {
+    pub fn initialize(env: Env, admin: Address, fee_collector: Address, fee_bps: u32) {
         admin.require_auth();
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
-        env.storage().persistent().set(&DataKey::FeeCollector, &fee_collector);
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeCollector, &fee_collector);
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
 
         // 🔒 Circuit breaker default
         env.storage().persistent().set(&DataKey::Paused, &false);
 
         // 🔢 Counter starts at 0
-        env.storage().persistent().set(&DataKey::EscrowCounter, &0u64);
-        
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowCounter, &0u64);
+
         // 📊 Analytics initialization
-        env.storage().persistent().set(&DataKey::TotalFundedAmount, &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalFundedAmount, &0i128);
     }
 
     // =========================
@@ -233,8 +231,14 @@ impl Contract {
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
         // Update total funded amount
-        let current_total: i128 = env.storage().persistent().get(&DataKey::TotalFundedAmount).unwrap_or(0);
-        env.storage().persistent().set(&DataKey::TotalFundedAmount, &(current_total + amount));
+        let current_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalFundedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalFundedAmount, &(current_total + amount));
 
         // Track escrow ID for pagination
         let mut escrow_ids: Vec<u64> = env
@@ -256,28 +260,21 @@ impl Contract {
             amount,
             status: EscrowStatus::Pending,
         };
-        env.events().publish(
-            (Symbol::new(&env, "escrow_created"), escrow_id),
-            event,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "escrow_created"), escrow_id), event);
 
         Ok(escrow_id)
     }
 
     /// Retrieve an escrow record by ID.
     pub fn get_escrow(env: Env, escrow_id: u64) -> Option<Escrow> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
+        env.storage().persistent().get(&DataKey::Escrow(escrow_id))
     }
 
     /// Get metadata for an escrow.
     pub fn get_escrow_metadata(env: Env, escrow_id: u64) -> Option<Bytes> {
-        let escrow: Option<Escrow> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id));
-        
+        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
+
         escrow.and_then(|e| e.metadata)
     }
 
@@ -301,23 +298,19 @@ impl Contract {
             .unwrap_or(0)
     }
 
-    pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+    pub fn fund_escrow(env: Env, _escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         // existing fund logic here
         Ok(())
     }
 
-    pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+    pub fn release_escrow(env: Env, _escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         // existing release logic here
         Ok(())
     }
 
-    pub fn release_partial(
-        env: Env,
-        escrow_id: u64,
-        amount: i128,
-    ) -> Result<(), ContractError> {
+    pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         // existing partial release logic here
         Ok(())
@@ -325,7 +318,7 @@ impl Contract {
 
     pub fn refund_escrow(
         env: Env,
-        escrow_id: u64,
+        _escrow_id: u64,
         initiator: Address,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
@@ -336,8 +329,8 @@ impl Contract {
 
     pub fn resolve_dispute(
         env: Env,
-        escrow_id: u64,
-        resolution: u32,
+        _escrow_id: u64,
+        _resolution: u32,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         // existing dispute resolution logic here
@@ -350,9 +343,7 @@ impl Contract {
 
     /// Get the current admin address.
     pub fn get_admin(env: Env) -> Option<Address> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Admin)
+        env.storage().persistent().get(&DataKey::Admin)
     }
 
     /// Set the platform fee percentage (basis points).
@@ -369,14 +360,10 @@ impl Contract {
             return Err(ContractError::InvalidFeeConfig);
         }
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::FeeBps, &fee_bps);
+        env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
 
-        env.events().publish(
-            (Symbol::new(&env, "fee_changed"),),
-            fee_bps,
-        );
+        env.events()
+            .publish((Symbol::new(&env, "fee_changed"),), fee_bps);
 
         Ok(())
     }
@@ -390,8 +377,4 @@ impl Contract {
     }
 }
 
-pub use errors::ContractError;
-pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FundsReleasedEvent, RefundHistoryEntry,
-    RefundReason, RefundRequest, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
-};
+// Removed duplicate re-exports at EOF

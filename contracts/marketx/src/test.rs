@@ -370,3 +370,174 @@ fn test_analytics_aggregation() {
     assert_eq!(client.get_total_escrows(), 3);
     assert_eq!(client.get_total_funded_amount(), 4000);
 }
+
+
+#[test]
+fn buyer_can_release_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    // Register a mock token contract
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Fund the contract so it can pay out
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+
+    client.release_escrow(&escrow_id);
+
+    // Seller received funds
+    assert_eq!(token.balance(&seller), 1000);
+
+    // Status updated
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+}
+
+#[test]
+fn release_fails_if_not_pending() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None);
+
+    // First release succeeds
+    // (skipping token setup here — just testing state guard)
+    // Force status to Released directly
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.status = crate::types::EscrowStatus::Released;
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    let result = client.try_release_escrow(&escrow_id);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
+fn release_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_release_escrow(&999u64);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+#[test]
+fn buyer_can_fund_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Mint tokens to buyer
+    token_admin.mint(&buyer, &1000);
+    assert_eq!(token.balance(&buyer), 1000);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+
+    client.fund_escrow(&escrow_id);
+
+    // Buyer balance drained, contract holds the funds
+    assert_eq!(token.balance(&buyer), 0);
+    assert_eq!(token.balance(&client.address), 1000);
+
+    // Status remains Pending
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Pending);
+}
+
+#[test]
+fn fund_fails_if_not_pending() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+    token_admin.mint(&buyer, &1000);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+
+    // Force status to Released
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.status = crate::types::EscrowStatus::Released;
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    let result = client.try_fund_escrow(&escrow_id);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
+fn fund_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_fund_escrow(&999u64);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+#[test]
+fn fund_fails_if_buyer_has_insufficient_balance() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    // Intentionally do NOT mint any tokens to buyer
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+
+    // Should panic/revert because buyer has 0 balance
+    let result = client.try_fund_escrow(&escrow_id);
+    assert!(result.is_err());
+}

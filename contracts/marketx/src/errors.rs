@@ -38,3 +38,12 @@ pub enum ContractError {
     // Duplicates
     DuplicateEscrow = 70,
 }
+
+#[derive(Debug)]
+pub enum ContractError {
+    EscrowNotFound,
+    InvalidStatus,
+    InvalidAmount,
+    ReleaseExceedsBalance,
+    TransactionFailed,
+}

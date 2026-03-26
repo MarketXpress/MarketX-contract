@@ -437,3 +437,62 @@ pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
 }
 
 // Removed duplicate re-exports at EOF
+
+use crate::types::{Escrow, EscrowStatus};
+use crate::errors::ContractError;
+
+pub fn release_partial(
+    escrow: &mut Escrow,
+    released_amount: u64,
+) -> Result<(), ContractError> {
+    if escrow.status != EscrowStatus::Locked {
+        return Err(ContractError::InvalidStatus);
+    }
+
+    if released_amount == 0 {
+        return Err(ContractError::InvalidAmount);
+    }
+
+    if released_amount > escrow.amount {
+        return Err(ContractError::ReleaseExceedsBalance);
+    }
+
+    let refund_amount = escrow.amount - released_amount;
+
+    // Transfer released funds to seller
+    transfer_funds(&escrow.seller, released_amount)?;
+
+    // Refund remainder to buyer
+    if refund_amount > 0 {
+        transfer_funds(&escrow.buyer, refund_amount)?;
+    }
+
+    // Update escrow state
+    escrow.released_amount = released_amount;
+    escrow.refunded_amount = refund_amount;
+    escrow.status = if refund_amount > 0 {
+        EscrowStatus::PartiallyReleased
+    } else {
+        EscrowStatus::Released
+    };
+
+    // Emit event
+    emit_funds_released_event(escrow);
+
+    Ok(())
+}
+
+// Mock transfer function
+fn transfer_funds(_recipient: &str, _amount: u64) -> Result<(), ContractError> {
+    // integrate with blockchain runtime
+    Ok(())
+}
+
+// Mock event emitter
+fn emit_funds_released_event(escrow: &Escrow) {
+    println!(
+        "FundsReleasedEvent: escrow={}, released={}, refunded={}, status={:?}",
+        escrow.id, escrow.released_amount, escrow.refunded_amount, escrow.status
+    );
+}
+

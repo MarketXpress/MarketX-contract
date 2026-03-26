@@ -124,3 +124,23 @@ pub struct RefundHistoryEntry {
     pub amount: i128,
     pub refunded_at: u64,
 }
+
+#[derive(Debug, Clone)]
+pub enum EscrowStatus {
+    Pending,
+    Locked,
+    Released,
+    Refunded,
+    PartiallyReleased, // new
+}
+
+#[derive(Debug, Clone)]
+pub struct Escrow {
+    pub id: String,
+    pub buyer: String,
+    pub seller: String,
+    pub amount: u64,
+    pub released_amount: u64,
+    pub refunded_amount: u64,
+    pub status: EscrowStatus,
+}

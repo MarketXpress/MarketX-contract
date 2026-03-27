@@ -1,6 +1,8 @@
 #![cfg(test)]
 extern crate std;
 
+use arbitrary::{Arbitrary, Unstructured};
+use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 
 use crate::errors::ContractError;
@@ -57,7 +59,6 @@ fn escrow_actions_blocked_when_paused() {
 fn escrow_ids_increment_sequentially() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
@@ -98,7 +99,6 @@ fn escrow_ids_increment_sequentially() {
 fn no_escrow_id_collision() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
@@ -734,4 +734,140 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
 
     let result = client.try_resolve_dispute(&999u64, &0u32);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+// =========================
+// FUZZ / PROPERTY TESTS
+// =========================
+
+// =========================
+
+#[derive(Debug, Clone, Arbitrary)]
+enum FuzzAction {
+    Create,
+    MintBuyer,
+    Fund,
+    MintContract,
+    Release,
+    RefundBuyer,
+    ResolveDisputeSeller,
+}
+
+fn run_fuzz_actions(actions: &[FuzzAction]) {
+    let (env, client) = setup();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let mut escrow_id: Option<u64> = None;
+
+    for action in actions {
+        match action {
+            FuzzAction::Create => {
+                if escrow_id.is_none() {
+                    let id = client.create_escrow(
+                        &buyer,
+                        &seller,
+                        &token_id.address(),
+                        &1000,
+                        &None,
+                        &Some(arbiter.clone()),
+                    );
+                    escrow_id = Some(id);
+                }
+            }
+            FuzzAction::MintBuyer => {
+                token_admin.mint(&buyer, &1000);
+            }
+            FuzzAction::Fund => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_fund_escrow(&id);
+                }
+            }
+            FuzzAction::MintContract => {
+                token_admin.mint(&client.address, &1000);
+            }
+            FuzzAction::Release => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_release_escrow(&id);
+                }
+            }
+            FuzzAction::RefundBuyer => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_refund_escrow(&id, &buyer);
+                }
+            }
+            FuzzAction::ResolveDisputeSeller => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_resolve_dispute(&id, &0u32);
+                }
+            }
+        }
+
+        if let Some(id) = escrow_id {
+            let escrow = client.get_escrow(&id);
+
+            if let Some(escrow) = escrow {
+                assert!(escrow.amount >= 0);
+
+                match escrow.status {
+                    crate::types::EscrowStatus::Pending
+                    | crate::types::EscrowStatus::Released
+                    | crate::types::EscrowStatus::Refunded
+                    | crate::types::EscrowStatus::Disputed => {}
+                }
+
+                assert!(token.balance(&buyer) >= 0);
+                assert!(token.balance(&seller) >= 0);
+                assert!(token.balance(&client.address) >= 0);
+            }
+        }
+    }
+}
+
+proptest! {
+    #[test]
+    fn fuzz_escrow_lifecycle(actions in proptest::collection::vec(0u8..7, 1..25)) {
+        let mapped: std::vec::Vec<FuzzAction> = actions
+            .into_iter()
+            .map(|action| match action {
+                0 => FuzzAction::Create,
+                1 => FuzzAction::MintBuyer,
+                2 => FuzzAction::Fund,
+                3 => FuzzAction::MintContract,
+                4 => FuzzAction::Release,
+                5 => FuzzAction::RefundBuyer,
+                _ => FuzzAction::ResolveDisputeSeller,
+            })
+            .collect();
+
+        run_fuzz_actions(&mapped);
+    }
+}
+
+#[test]
+fn arbitrary_fuzz_lifecycle() {
+    let seeds: [&[u8]; 4] = [
+        b"marketx-seed-1-create-fund-release",
+        b"marketx-seed-2-create-fund-refund",
+        b"marketx-seed-3-create-dispute-resolve",
+        b"marketx-seed-4-mixed-lifecycle-edge-cases",
+    ];
+
+    for seed in seeds {
+        let mut u = Unstructured::new(seed);
+        let actions =
+            std::vec::Vec::<FuzzAction>::arbitrary(&mut u).unwrap_or_else(|_| std::vec::Vec::new());
+
+        run_fuzz_actions(&actions);
+    }
 }

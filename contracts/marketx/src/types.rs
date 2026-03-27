@@ -7,7 +7,7 @@ pub enum DataKey {
     Escrow(u64),
     EscrowIds,
 
-    // 🔢 Escrow Counter
+    // Escrow Counter
     EscrowCounter,
 
     // Fees
@@ -114,6 +114,8 @@ pub struct RefundRequest {
     pub reason: RefundReason,
     pub status: RefundStatus,
     pub created_at: u64,
+    pub evidence_hash: Option<Bytes>,
+    pub counter_evidence_hash: Option<Bytes>,
 }
 
 #[contracttype]
@@ -125,22 +127,20 @@ pub struct RefundHistoryEntry {
     pub refunded_at: u64,
 }
 
-#[derive(Debug, Clone)]
-pub enum EscrowStatus {
-    Pending,
-    Locked,
-    Released,
-    Refunded,
-    PartiallyReleased, // new
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundRequestedEvent {
+    pub request_id: u64,
+    pub escrow_id: u64,
+    pub requester: Address,
+    pub evidence_hash: Option<Bytes>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Escrow {
-    pub id: String,
-    pub buyer: String,
-    pub seller: String,
-    pub amount: u64,
-    pub released_amount: u64,
-    pub refunded_amount: u64,
-    pub status: EscrowStatus,
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CounterEvidenceSubmittedEvent {
+    pub request_id: u64,
+    pub escrow_id: u64,
+    pub responder: Address,
+    pub counter_evidence_hash: Option<Bytes>,
 }

@@ -64,9 +64,30 @@ fn escrow_ids_increment_sequentially() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250);
 
-    let id1 = client.create_escrow(&Address::generate(&env), &seller, &token, &1000, &None);
-    let id2 = client.create_escrow(&Address::generate(&env), &seller, &token, &2000, &None);
-    let id3 = client.create_escrow(&Address::generate(&env), &seller, &token, &3000, &None);
+    let id1 = client.create_escrow(
+        &Address::generate(&env),
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &None,
+    );
+    let id2 = client.create_escrow(
+        &Address::generate(&env),
+        &seller,
+        &token,
+        &2000,
+        &None,
+        &None,
+    );
+    let id3 = client.create_escrow(
+        &Address::generate(&env),
+        &seller,
+        &token,
+        &3000,
+        &None,
+        &None,
+    );
 
     assert_eq!(id1, 1);
     assert_eq!(id2, 2);
@@ -88,7 +109,7 @@ fn no_escrow_id_collision() {
 
     for _ in 0..10 {
         let buyer_mock = Address::generate(&env);
-        let id = client.create_escrow(&buyer_mock, &seller, &token, &100, &None);
+        let id = client.create_escrow(&buyer_mock, &seller, &token, &100, &None, &None);
         assert!(!ids.contains(&id));
         ids.push(id);
     }
@@ -112,7 +133,7 @@ fn escrow_counter_overflow_fails() {
             .set(&crate::types::DataKey::EscrowCounter, &u64::MAX);
     });
 
-    let result = client.try_create_escrow(&buyer, &seller, &token, &100, &None);
+    let result = client.try_create_escrow(&buyer, &seller, &token, &100, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::EscrowIdOverflow)));
 }
 
@@ -135,7 +156,7 @@ fn test_metadata_stored_successfully() {
     let metadata = Bytes::from_slice(&env, b"order_ref:12345");
     let metadata_opt = Some(metadata.clone());
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &metadata_opt);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &metadata_opt, &None);
 
     // Retrieve escrow and verify metadata
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -158,7 +179,7 @@ fn test_metadata_none_stored_successfully() {
     client.initialize(&admin, &admin, &250);
 
     // Create escrow without metadata
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None);
 
     // Retrieve escrow and verify metadata is None
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -184,7 +205,8 @@ fn test_oversized_metadata_rejected() {
     let oversized_data = std::vec![0u8; (MAX_METADATA_SIZE + 1) as usize];
     let oversized_metadata = Some(Bytes::from_slice(&env, &oversized_data));
 
-    let result = client.try_create_escrow(&buyer, &seller, &token, &1000, &oversized_metadata);
+    let result =
+        client.try_create_escrow(&buyer, &seller, &token, &1000, &oversized_metadata, &None);
     assert_eq!(result, Err(Ok(ContractError::MetadataTooLarge)));
 }
 
@@ -203,7 +225,7 @@ fn test_metadata_at_max_size_accepted() {
     let max_data = std::vec![0u8; MAX_METADATA_SIZE as usize];
     let max_metadata = Some(Bytes::from_slice(&env, &max_data));
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &max_metadata);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &max_metadata, &None);
 
     // Should succeed
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -242,11 +264,11 @@ fn test_duplicate_escrow_rejected() {
     let metadata = Some(Bytes::from_slice(&env, b"order_ref:12345"));
 
     // First escrow creation should succeed
-    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &metadata);
+    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &metadata, &None);
     assert_eq!(escrow_id1, 1);
 
     // Second escrow with same buyer, seller, and metadata should fail
-    let result = client.try_create_escrow(&buyer, &seller, &token, &2000, &metadata);
+    let result = client.try_create_escrow(&buyer, &seller, &token, &2000, &metadata, &None);
     assert_eq!(result, Err(Ok(ContractError::DuplicateEscrow)));
 }
 
@@ -263,26 +285,26 @@ fn test_distinct_escrows_allowed() {
 
     // Create first escrow with metadata
     let metadata1 = Some(Bytes::from_slice(&env, b"order_ref:12345"));
-    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &metadata1);
+    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &metadata1, &None);
     assert_eq!(escrow_id1, 1);
 
     // Create second escrow with different metadata - should succeed
     let metadata2 = Some(Bytes::from_slice(&env, b"order_ref:67890"));
-    let escrow_id2 = client.create_escrow(&buyer, &seller, &token, &2000, &metadata2);
+    let escrow_id2 = client.create_escrow(&buyer, &seller, &token, &2000, &metadata2, &None);
     assert_eq!(escrow_id2, 2);
 
     // Create third escrow with no metadata - should succeed
-    let escrow_id3 = client.create_escrow(&buyer, &seller, &token, &3000, &None);
+    let escrow_id3 = client.create_escrow(&buyer, &seller, &token, &3000, &None, &None);
     assert_eq!(escrow_id3, 3);
 
     // Create fourth escrow with different buyer - should succeed
     let buyer2 = Address::generate(&env);
-    let escrow_id4 = client.create_escrow(&buyer2, &seller, &token, &4000, &metadata1);
+    let escrow_id4 = client.create_escrow(&buyer2, &seller, &token, &4000, &metadata1, &None);
     assert_eq!(escrow_id4, 4);
 
     // Create fifth escrow with different seller - should succeed
     let seller2 = Address::generate(&env);
-    let escrow_id5 = client.create_escrow(&buyer, &seller2, &token, &5000, &metadata1);
+    let escrow_id5 = client.create_escrow(&buyer, &seller2, &token, &5000, &metadata1, &None);
     assert_eq!(escrow_id5, 5);
 }
 
@@ -298,11 +320,11 @@ fn test_duplicate_escrow_with_none_metadata() {
     client.initialize(&admin, &admin, &250);
 
     // Create first escrow with no metadata
-    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &None);
+    let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None);
     assert_eq!(escrow_id1, 1);
 
     // Second escrow with same buyer, seller, and no metadata should fail
-    let result = client.try_create_escrow(&buyer, &seller, &token, &2000, &None);
+    let result = client.try_create_escrow(&buyer, &seller, &token, &2000, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::DuplicateEscrow)));
 }
 
@@ -321,7 +343,7 @@ fn test_escrow_hash_stored_correctly() {
     let metadata = Some(Bytes::from_slice(&env, b"order_ref:unique_hash_test"));
 
     // Create escrow
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &metadata);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &metadata, &None);
 
     // Verify escrow was created and can be retrieved
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -350,13 +372,14 @@ fn test_analytics_aggregation() {
     assert_eq!(client.get_total_funded_amount(), 0);
 
     // Create some escrows
-    client.create_escrow(&buyer, &seller, &token, &1000, &None);
+    client.create_escrow(&buyer, &seller, &token, &1000, &None, &None);
     client.create_escrow(
         &buyer,
         &seller,
         &token,
         &2500,
         &Some(Bytes::from_slice(&env, b"meta1")),
+        &None,
     );
     client.create_escrow(
         &buyer,
@@ -364,13 +387,13 @@ fn test_analytics_aggregation() {
         &token,
         &500,
         &Some(Bytes::from_slice(&env, b"meta2")),
+        &None,
     );
 
     // Verify analytics
     assert_eq!(client.get_total_escrows(), 3);
     assert_eq!(client.get_total_funded_amount(), 4000);
 }
-
 
 #[test]
 fn buyer_can_release_escrow() {
@@ -390,7 +413,7 @@ fn buyer_can_release_escrow() {
     // Fund the contract so it can pay out
     token_admin.mint(&client.address, &1000);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
 
     client.release_escrow(&escrow_id);
 
@@ -413,7 +436,7 @@ fn release_fails_if_not_pending() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None);
 
     // First release succeeds
     // (skipping token setup here — just testing state guard)
@@ -464,7 +487,7 @@ fn buyer_can_fund_escrow() {
     token_admin.mint(&buyer, &1000);
     assert_eq!(token.balance(&buyer), 1000);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
 
     client.fund_escrow(&escrow_id);
 
@@ -491,7 +514,7 @@ fn fund_fails_if_not_pending() {
     client.initialize(&admin, &admin, &0);
     token_admin.mint(&buyer, &1000);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
 
     // Force status to Released
     env.as_contract(&client.address, || {
@@ -535,9 +558,180 @@ fn fund_fails_if_buyer_has_insufficient_balance() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
 
     // Should panic/revert because buyer has 0 balance
     let result = client.try_fund_escrow(&escrow_id);
     assert!(result.is_err());
+}
+
+// =========================
+// ARBITER TESTS
+// =========================
+
+#[test]
+fn test_create_escrow_stores_arbiter() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &Some(arbiter.clone()),
+    );
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.arbiter, Some(arbiter));
+}
+
+#[test]
+fn test_create_escrow_without_arbiter_stores_none() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None);
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.arbiter, None);
+}
+
+#[test]
+fn test_arbiter_can_resolve_dispute() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Fund the contract so it can pay out
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &Some(arbiter.clone()),
+    );
+
+    // Force status to Disputed
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.status = crate::types::EscrowStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    // Arbiter resolves in favor of seller (resolution = 0)
+    client.resolve_dispute(&escrow_id, &0u32);
+
+    assert_eq!(token.balance(&seller), 1000);
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+}
+
+#[test]
+fn test_arbiter_can_refund_buyer_on_dispute() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &Some(arbiter.clone()),
+    );
+
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.status = crate::types::EscrowStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    // Arbiter resolves in favor of buyer (resolution = 1)
+    client.resolve_dispute(&escrow_id, &1u32);
+
+    assert_eq!(token.balance(&buyer), 1000);
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_resolve_dispute_fails_if_not_disputed() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &Some(arbiter));
+
+    // Escrow is still Pending, not Disputed
+    let result = client.try_resolve_dispute(&escrow_id, &0u32);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
+fn test_resolve_dispute_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_resolve_dispute(&999u64, &0u32);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }

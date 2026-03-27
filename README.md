@@ -72,7 +72,7 @@ This repository is a **Cargo workspace** — every directory under `contracts/` 
 ├── Cargo.lock               # Locked dependency versions (committed)
 ├── Makefile                 # Workspace-wide shortcuts (build, test, fmt, check)
 └── contracts/
-    └── marketx/             # Placeholder contract (replace with real logic)
+    └── marketx/             # Escrow contract for marketplace settlement
         ├── Cargo.toml       # Inherits versions from workspace
         ├── Makefile         # Per-contract shortcuts
         └── src/
@@ -190,6 +190,8 @@ stellar contract info \
 
 ## Contract Reference
 
+This section still contains some legacy naming from earlier contract iterations. For the current event model, off-chain indexing guidance, and TTL behavior, use the `Event Schemas`, `Off-Chain Indexing Spec`, `TTL Maintenance`, and `Current Implementation Notes` sections below as the source of truth.
+
 ### Storage Model
 
 All state is stored in **persistent** ledger entries (minimum TTL: 4,096 ledgers on testnet, ~5.7 hours at 5 s/ledger). There are three key types:
@@ -293,24 +295,53 @@ make check
 
 ---
 
+## Event Schemas (Off-Chain Tracking)
+
+The contract now emits Soroban `#[contractevent]` events using compact `vec` payloads instead of map-style payloads. This avoids per-field name overhead and keeps escrow events free of large string or metadata blobs.
+
+| Event | Topics | Data | Emitted when |
+|---|---|---|---|
+| `EscrowCreatedEvent` | `("escrow_created", escrow_id)` | `[buyer, seller, token, amount, status, arbiter]` | `create_escrow` |
+| `FundsReleasedEvent` | `("funds_released", escrow_id)` | `[amount]` | `release_escrow` |
+| `StatusChangeEvent` | `("status_change", escrow_id)` | `[from_status, to_status, actor]` | Every implemented escrow status transition |
+| `FeeChangedEvent` | `("fee_changed")` | `[old_fee_bps, new_fee_bps, actor]` | `set_fee_percentage` |
+
+`StatusChangeEvent` is the canonical lifecycle stream. Every implemented escrow status mutation now emits it, including dispute resolution.
+
+## Off-Chain Indexing Spec
+
+There is intentionally no on-chain `EscrowsByBuyer` or `EscrowsBySeller` index. Frontends should derive those views from events.
+
+Recommended indexer flow:
+
+1. Subscribe to all events for the MarketX contract ID.
+2. On `EscrowCreatedEvent`, read `escrow_id` from the second topic and decode the data vector as `[buyer, seller, token, amount, status, arbiter]`.
+3. Upsert a canonical escrow record keyed by `escrow_id`.
+4. Append `escrow_id` to off-chain lookup tables keyed by `buyer` and `seller`.
+5. Optionally maintain an arbiter lookup table when `arbiter` is present.
+6. On `StatusChangeEvent`, update the escrow status and move the escrow between active and terminal views.
+
+This schema provides everything needed for user escrow lists without an on-chain reverse index:
+
+- `EscrowCreatedEvent` supplies the user addresses, escrow ID, token, amount, initial status, and arbiter.
+- `StatusChangeEvent` supplies the full transition history needed to keep active/completed views current.
+- If a detail page needs optional metadata, the indexer can fetch `get_escrow` or `get_escrow_metadata` once and cache it off-chain instead of paying to include metadata in every event.
+
+## TTL Maintenance
+
+Persistent entries on Soroban expire unless their TTL is extended. The contract exposes `bump_escrow(escrow_id: u64)` so anyone can refresh long-lived escrow storage before archival.
+
+- `bump_escrow` is permissionless.
+- It extends the escrow record itself.
+- It also extends the duplicate-prevention hash entry associated with that escrow.
+- Integrators can call it periodically for long-running escrows or disputes.
+
+## Current Implementation Notes
+
+The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `resolve_dispute`, pause/unpause, fee updates, and `bump_escrow`.
+
+`release_partial`, `refund_escrow`, and broader pending-state transitions are still placeholders and should not yet be treated as production-ready flows.
+
 ## License
 
 MIT
-## Event Schemas (Off-Chain Tracking)
-
-Event topics are standardized for off-chain indexing. Each event uses topic tuple `(event_name, escrow_id)` and typed payload data.
-
-| Topic | Emitted when | Payload fields |
-|---|---|---|
-| `escrow_created` | `store_escrow`, `create_escrow`, `create_bulk_escrows` | `escrow_id`, `buyer`, `seller`, `arbiter`, `token`, `amount`, `released_amount`, `status` |
-| `funds_released` | `release_escrow`, `release_partial` | `escrow_id`, `buyer`, `seller`, `gross_amount`, `fee_amount`, `net_amount`, `released_amount`, `total_amount`, `is_final_release` |
-| `status_change` | Any escrow status transition | `escrow_id`, `from_status`, `to_status`, `actor` |
-
-This schema allows indexers to reconstruct escrow creation, status transitions, and payout progression without extra reads.
-
-## Upgrade Process
-
-1. Deploy new contract WASM to the network.
-2. Call `upgrade(new_wasm_hash)` from the admin account.
-3. Contract code is swapped, but state stored in ledger remains intact.
-4. Verify state after upgrade with `get_*` functions.

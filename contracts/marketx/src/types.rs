@@ -3,41 +3,25 @@ use soroban_sdk::{contracttype, Address, Bytes, BytesN};
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    // Escrow storage
     Escrow(u64),
     EscrowIds,
-
-    // Escrow Counter
     EscrowCounter,
-
-    // Fees
     FeeCollector,
     FeeBps,
     MinFee,
-
-    // Security
     ReentrancyLock,
     Admin,
     Paused,
-
-    // Refunds
     RefundRequest(u64),
     RefundCount,
     EscrowRefunds(u64),
     RefundHistory(u64),
     GlobalRefundHistory,
-
-    // Initial value for testing
     InitialValue,
-
-    // Escrow uniqueness hash (buyer + seller + metadata hash -> escrow_id)
     EscrowHash(BytesN<32>),
-
-    // Analytics
     TotalFundedAmount,
 }
 
-/// Maximum metadata size in bytes (1 KB)
 pub const MAX_METADATA_SIZE: u32 = 1024;
 
 #[contracttype]
@@ -49,6 +33,7 @@ pub struct Escrow {
     pub amount: i128,
     pub status: EscrowStatus,
     pub metadata: Option<Bytes>,
+    pub arbiter: Option<Address>,
 }
 
 #[contracttype]
@@ -69,6 +54,7 @@ pub struct EscrowCreatedEvent {
     pub token: Address,
     pub amount: i128,
     pub status: EscrowStatus,
+    pub arbiter: Option<Address>,
 }
 
 #[contracttype]

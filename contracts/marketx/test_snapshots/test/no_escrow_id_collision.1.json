@@ -52,6 +52,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -81,6 +82,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -110,6 +112,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -139,6 +142,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -168,6 +172,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -197,6 +202,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -226,6 +232,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -255,6 +262,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -284,6 +292,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -313,6 +322,7 @@
                 {
                   "i128": "100"
                 },
+                "void",
                 "void"
               ]
             }
@@ -383,6 +393,12 @@
                     "val": {
                       "i128": "100"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -464,6 +480,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -539,6 +561,12 @@
                     "val": {
                       "i128": "100"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -620,6 +648,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -695,6 +729,12 @@
                     "val": {
                       "i128": "100"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -776,6 +816,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -851,6 +897,12 @@
                     "val": {
                       "i128": "100"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -932,6 +984,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -1010,6 +1068,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -1085,6 +1149,12 @@
                     "val": {
                       "i128": "100"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -1889,6 +1959,12 @@
                   "val": {
                     "i128": "100"
                   }
+                },
+                {
+                  "key": {
+                    "symbol": "arbiter"
+                  },
+                  "val": "void"
                 },
                 {
                   "key": {

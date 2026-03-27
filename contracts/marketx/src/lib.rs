@@ -165,6 +165,24 @@ impl Contract {
             .unwrap_or(false)
     }
 
+    // =========================
+    // 💰 ESCROW ACTIONS
+    // =========================
+
+    /// Create a new escrow with optional metadata.
+    ///
+    /// # Arguments
+    /// * `buyer` - The buyer's address
+    /// * `seller` - The seller's address
+    /// * `token` - The token contract address
+    /// * `amount` - The escrow amount
+    /// * `metadata` - Optional metadata (max 1KB)
+    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
+    ///               If provided, only this address may call `resolve_dispute` for this escrow.
+    ///
+    /// # Errors
+    /// * `MetadataTooLarge` - If metadata exceeds 1KB
+    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
     pub fn create_escrow(
         env: Env,
         buyer: Address,
@@ -172,6 +190,7 @@ impl Contract {
         token: Address,
         amount: i128,
         metadata: Option<Bytes>,
+        arbiter: Option<Address>,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
@@ -193,6 +212,7 @@ impl Contract {
             amount,
             status: EscrowStatus::Pending,
             metadata: metadata.clone(),
+            arbiter: arbiter.clone(),
         };
 
         env.storage()
@@ -230,6 +250,7 @@ impl Contract {
             token,
             amount,
             status: EscrowStatus::Pending,
+            arbiter,
         };
         env.events()
             .publish((Symbol::new(&env, "escrow_created"), escrow_id), event);
@@ -263,18 +284,22 @@ impl Contract {
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
+        // 1. Load and validate the escrow exists
         let escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
+        // 2. Validate escrow is in Pending state
         if escrow.status != EscrowStatus::Pending {
             return Err(ContractError::InvalidEscrowState);
         }
 
+        // 3. Enforce buyer authorization (covers the token transfer below)
         escrow.buyer.require_auth();
 
+        // 4. Transfer funds from buyer into the contract
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
         token_client.transfer(
             &escrow.buyer,
@@ -288,18 +313,22 @@ impl Contract {
     pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
+        // 1. Load and validate the escrow exists
         let mut escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
+        // 2. Validate escrow is in Pending state
         if escrow.status != EscrowStatus::Pending {
             return Err(ContractError::InvalidEscrowState);
         }
 
+        // 3. Enforce buyer authorization
         escrow.buyer.require_auth();
 
+        // 4. Transfer funds from contract to seller via token interface
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -308,11 +337,13 @@ impl Contract {
         );
 
         let from_status = escrow.status.clone();
+        // 5. Update escrow status to Released
         escrow.status = EscrowStatus::Released;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
+        // 6. Emit FundsReleasedEvent
         let event = FundsReleasedEvent {
             escrow_id,
             amount: escrow.amount,
@@ -332,7 +363,6 @@ impl Contract {
 
         Ok(())
     }
-
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         Ok(())
@@ -469,9 +499,12 @@ impl Contract {
         Ok(())
     }
 
-    pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: u32) -> Result<(), ContractError> {
+    pub fn resolve_dispute(
+        env: Env,
+        escrow_id: u64,
+        release_to_seller: bool,
+    ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
-        Self::assert_admin(&env)?;
 
         let mut escrow: Escrow = env
             .storage()
@@ -483,12 +516,28 @@ impl Contract {
             return Err(ContractError::InvalidEscrowState);
         }
 
+        let arbiter = escrow.arbiter.clone().ok_or(ContractError::Unauthorized)?;
+
+        arbiter.require_auth();
+
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+
         let from_status = escrow.status.clone();
 
-        match resolution {
-            1 => escrow.status = EscrowStatus::Released,
-            2 => escrow.status = EscrowStatus::Refunded,
-            _ => return Err(ContractError::InvalidDisputeResolution),
+        if release_to_seller {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &escrow.seller,
+                &escrow.amount,
+            );
+            escrow.status = EscrowStatus::Released;
+        } else {
+            token_client.transfer(
+                &env.current_contract_address(),
+                &escrow.buyer,
+                &escrow.amount,
+            );
+            escrow.status = EscrowStatus::Refunded;
         }
 
         env.storage()
@@ -500,6 +549,7 @@ impl Contract {
             from_status,
             to_status: escrow.status.clone(),
         };
+
         env.events().publish(
             (Symbol::new(&env, "status_changed"), escrow_id),
             status_event,

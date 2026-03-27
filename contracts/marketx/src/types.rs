@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, Bytes, BytesN};
+use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN};
 
 #[contracttype]
 #[derive(Clone)]
@@ -66,9 +66,10 @@ pub enum EscrowStatus {
     Disputed,
 }
 
-#[contracttype]
+#[contractevent(topics = ["escrow_created"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowCreatedEvent {
+    #[topic]
     pub escrow_id: u64,
     pub buyer: Address,
     pub seller: Address,
@@ -78,19 +79,30 @@ pub struct EscrowCreatedEvent {
     pub arbiter: Option<Address>,
 }
 
-#[contracttype]
+#[contractevent(topics = ["funds_released"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FundsReleasedEvent {
+    #[topic]
     pub escrow_id: u64,
     pub amount: i128,
 }
 
-#[contracttype]
+#[contractevent(topics = ["status_change"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusChangeEvent {
+    #[topic]
     pub escrow_id: u64,
     pub from_status: EscrowStatus,
     pub to_status: EscrowStatus,
+    pub actor: Address,
+}
+
+#[contractevent(topics = ["fee_changed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangedEvent {
+    pub old_fee_bps: u32,
+    pub new_fee_bps: u32,
+    pub actor: Address,
 }
 
 #[contracttype]

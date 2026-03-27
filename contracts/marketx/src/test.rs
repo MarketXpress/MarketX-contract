@@ -4,11 +4,15 @@ extern crate std;
 use arbitrary::{Arbitrary, Unstructured};
 use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _, Events as _},
+    Address, Bytes, Env, Event,
+};
 
 use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
 use crate::types::MAX_METADATA_SIZE;
-use crate::{Contract, ContractClient};
+use crate::{Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent, StatusChangeEvent};
 
 fn setup<'a>() -> (Env, ContractClient<'a>) {
     let env = Env::default();
@@ -612,6 +616,42 @@ fn test_create_escrow_without_arbiter_stores_none() {
 }
 
 #[test]
+fn test_create_escrow_emits_indexable_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &Some(Bytes::from_slice(&env, b"order_ref:indexable")),
+        &Some(arbiter.clone()),
+    );
+
+    let events = env.events().all().filter_by_contract(&client.address);
+    let emitted = events.events().to_vec();
+    let expected = EscrowCreatedEvent {
+        escrow_id,
+        buyer,
+        seller,
+        token,
+        amount: 1000,
+        status: crate::types::EscrowStatus::Pending,
+        arbiter: Some(arbiter),
+    };
+
+    assert_eq!(emitted, std::vec![expected.to_xdr(&env, &client.address)]);
+}
+
+#[test]
 fn test_arbiter_can_resolve_dispute() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
@@ -660,6 +700,45 @@ fn test_arbiter_can_resolve_dispute() {
 }
 
 #[test]
+fn test_release_emits_funds_and_status_change_events() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    let events = env.events().all().filter_by_contract(&client.address);
+    let emitted = events.events().to_vec();
+    let expected_release = FundsReleasedEvent {
+        escrow_id,
+        amount: 1000,
+    };
+    let expected_status = StatusChangeEvent {
+        escrow_id,
+        from_status: crate::types::EscrowStatus::Pending,
+        to_status: crate::types::EscrowStatus::Released,
+        actor: buyer,
+    };
+
+    assert_eq!(
+        emitted,
+        std::vec![
+            expected_release.to_xdr(&env, &client.address),
+            expected_status.to_xdr(&env, &client.address),
+        ]
+    );
+}
+
+#[test]
 fn test_arbiter_can_refund_buyer_on_dispute() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
@@ -703,6 +782,106 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+}
+
+#[test]
+fn test_resolve_dispute_emits_status_change_with_actor() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &Some(arbiter.clone()),
+    );
+
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.status = crate::types::EscrowStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    client.resolve_dispute(&escrow_id, &1u32);
+
+    let events = env.events().all().filter_by_contract(&client.address);
+    let emitted = events.events().to_vec();
+    let expected_status = StatusChangeEvent {
+        escrow_id,
+        from_status: crate::types::EscrowStatus::Disputed,
+        to_status: crate::types::EscrowStatus::Refunded,
+        actor: arbiter,
+    };
+
+    assert_eq!(
+        emitted,
+        std::vec![expected_status.to_xdr(&env, &client.address)]
+    );
+}
+
+#[test]
+fn test_bump_escrow_extends_ttl_to_maximum() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &Some(Bytes::from_slice(&env, b"ttl-test")),
+        &None,
+    );
+
+    let escrow_key = crate::types::DataKey::Escrow(escrow_id);
+    let before_ttl = env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&escrow_key)
+    });
+
+    client.bump_escrow(&escrow_id);
+
+    let after_ttl = env.as_contract(&client.address, || {
+        env.storage().persistent().get_ttl(&escrow_key)
+    });
+
+    assert!(after_ttl > before_ttl);
+    assert_eq!(after_ttl, env.storage().max_ttl());
+}
+
+#[test]
+fn test_bump_escrow_rejects_missing_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    let result = client.try_bump_escrow(&999u64);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }
 
 #[test]

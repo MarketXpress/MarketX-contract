@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
 mod types;
@@ -9,8 +9,9 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FundsReleasedEvent, RefundHistoryEntry,
-    RefundReason, RefundRequest, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
+    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FundsReleasedEvent,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
+    MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -116,6 +117,22 @@ impl Contract {
         }
 
         Ok(())
+    }
+
+    fn emit_status_change(
+        env: &Env,
+        escrow_id: u64,
+        from_status: EscrowStatus,
+        to_status: EscrowStatus,
+        actor: Address,
+    ) {
+        StatusChangeEvent {
+            escrow_id,
+            from_status,
+            to_status,
+            actor,
+        }
+        .publish(env);
     }
 }
 
@@ -265,8 +282,7 @@ impl Contract {
             status: EscrowStatus::Pending,
             arbiter,
         };
-        env.events()
-            .publish((Symbol::new(&env, "escrow_created"), escrow_id), event);
+        event.publish(&env);
 
         Ok(escrow_id)
     }
@@ -349,6 +365,8 @@ impl Contract {
 
         // 3. Enforce buyer authorization
         escrow.buyer.require_auth();
+        let actor = escrow.buyer.clone();
+        let from_status = escrow.status.clone();
 
         // 4. Transfer funds from contract to seller via token interface
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -369,8 +387,8 @@ impl Contract {
             escrow_id,
             amount: escrow.amount,
         };
-        env.events()
-            .publish((Symbol::new(&env, "funds_released"), escrow_id), event);
+        event.publish(&env);
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
         Ok(())
     }
@@ -388,6 +406,34 @@ impl Contract {
         Self::assert_not_paused(&env)?;
         initiator.require_auth();
         // existing refund logic here
+        Ok(())
+    }
+
+    pub fn bump_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        let max_ttl = env.storage().max_ttl();
+        let escrow_key = DataKey::Escrow(escrow_id);
+        env.storage()
+            .persistent()
+            .extend_ttl(&escrow_key, max_ttl, max_ttl);
+
+        let hash_key = DataKey::EscrowHash(Self::generate_escrow_hash(
+            &env,
+            &escrow.buyer,
+            &escrow.seller,
+            &escrow.metadata,
+        ));
+        if env.storage().persistent().has(&hash_key) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&hash_key, max_ttl, max_ttl);
+        }
+
         Ok(())
     }
 
@@ -411,14 +457,14 @@ impl Contract {
         }
 
         // Enforce arbiter or admin authorization
-        match &escrow.arbiter {
+        let actor = match &escrow.arbiter {
             Some(arbiter) => {
                 arbiter.require_auth();
+                arbiter.clone()
             }
-            None => {
-                Self::assert_admin(&env)?;
-            }
-        }
+            None => Self::assert_admin(&env)?,
+        };
+        let from_status = escrow.status.clone();
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
@@ -444,10 +490,7 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        env.events().publish(
-            (Symbol::new(&env, "dispute_resolved"), escrow_id),
-            resolution,
-        );
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
         Ok(())
     }
@@ -469,6 +512,11 @@ impl Contract {
             .get::<DataKey, Address>(&DataKey::Admin)
             .ok_or(ContractError::NotAdmin)?;
         admin.require_auth();
+        let old_fee_bps = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(0);
 
         // Validate fee is within allowed range (max 10% = 1000 bps)
         if fee_bps > 1000 {
@@ -477,8 +525,12 @@ impl Contract {
 
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
 
-        env.events()
-            .publish((Symbol::new(&env, "fee_changed"),), fee_bps);
+        FeeChangedEvent {
+            old_fee_bps,
+            new_fee_bps: fee_bps,
+            actor: admin,
+        }
+        .publish(&env);
 
         Ok(())
     }

@@ -54,7 +54,8 @@
                 },
                 {
                   "bytes": "6f726465725f7265663a3132333435"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -85,7 +86,8 @@
                 },
                 {
                   "bytes": "6f726465725f7265663a3637383930"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -114,6 +116,7 @@
                 {
                   "i128": "3000"
                 },
+                "void",
                 "void"
               ]
             }
@@ -145,7 +148,8 @@
                 },
                 {
                   "bytes": "6f726465725f7265663a3132333435"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -176,7 +180,8 @@
                 },
                 {
                   "bytes": "6f726465725f7265663a3132333435"
-                }
+                },
+                "void"
               ]
             }
           },
@@ -246,6 +251,12 @@
                     "val": {
                       "i128": "1000"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -329,6 +340,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -406,6 +423,12 @@
                     "val": {
                       "i128": "3000"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -487,6 +510,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -564,6 +593,12 @@
                     "val": {
                       "i128": "5000"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "arbiter"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -1088,59 +1123,27 @@
               }
             ],
             "data": {
-              "map": [
+              "vec": [
                 {
-                  "key": {
-                    "symbol": "amount"
-                  },
-                  "val": {
-                    "i128": "5000"
-                  }
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                 },
                 {
-                  "key": {
-                    "symbol": "buyer"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                  }
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                 },
                 {
-                  "key": {
-                    "symbol": "escrow_id"
-                  },
-                  "val": {
-                    "u64": "5"
-                  }
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
                 {
-                  "key": {
-                    "symbol": "seller"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
-                  }
+                  "i128": "5000"
                 },
                 {
-                  "key": {
-                    "symbol": "status"
-                  },
-                  "val": {
-                    "vec": [
-                      {
-                        "symbol": "Pending"
-                      }
-                    ]
-                  }
+                  "vec": [
+                    {
+                      "symbol": "Pending"
+                    }
+                  ]
                 },
-                {
-                  "key": {
-                    "symbol": "token"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
-                  }
-                }
+                "void"
               ]
             }
           }

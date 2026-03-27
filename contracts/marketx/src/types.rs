@@ -35,6 +35,9 @@ pub enum DataKey {
 
     // Analytics
     TotalFundedAmount,
+
+    // Arbiter assigned to an escrow
+    EscrowArbiter(u64),
 }
 
 /// Maximum metadata size in bytes (1 KB)
@@ -49,6 +52,9 @@ pub struct Escrow {
     pub amount: i128,
     pub status: EscrowStatus,
     pub metadata: Option<Bytes>,
+    /// Optional arbiter mutually chosen by buyer and seller at creation time.
+    /// If set, only this address may resolve disputes for this escrow.
+    pub arbiter: Option<Address>,
 }
 
 #[contracttype]
@@ -69,6 +75,7 @@ pub struct EscrowCreatedEvent {
     pub token: Address,
     pub amount: i128,
     pub status: EscrowStatus,
+    pub arbiter: Option<Address>,
 }
 
 #[contracttype]
@@ -123,24 +130,4 @@ pub struct RefundHistoryEntry {
     pub escrow_id: u64,
     pub amount: i128,
     pub refunded_at: u64,
-}
-
-#[derive(Debug, Clone)]
-pub enum EscrowStatus {
-    Pending,
-    Locked,
-    Released,
-    Refunded,
-    PartiallyReleased, // new
-}
-
-#[derive(Debug, Clone)]
-pub struct Escrow {
-    pub id: String,
-    pub buyer: String,
-    pub seller: String,
-    pub amount: u64,
-    pub released_amount: u64,
-    pub refunded_amount: u64,
-    pub status: EscrowStatus,
 }

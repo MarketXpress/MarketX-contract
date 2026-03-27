@@ -52,7 +52,9 @@
                 {
                   "i128": "1000"
                 },
-                "void",
+                {
+                  "bytes": "6f726465725f7265663a696e64657861626c65"
+                },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 }
@@ -62,8 +64,7 @@
           "sub_invocations": []
         }
       ]
-    ],
-    []
+    ]
   ],
   "ledger": {
     "protocol_version": 25,
@@ -147,7 +148,9 @@
                     "key": {
                       "symbol": "metadata"
                     },
-                    "val": "void"
+                    "val": {
+                      "bytes": "6f726465725f7265663a696e64657861626c65"
+                    }
                   },
                   {
                     "key": {
@@ -222,7 +225,7 @@
                     "symbol": "EscrowHash"
                   },
                   {
-                    "bytes": "97b3b75cb25d66a2f9be4cf21aa9218f64f13563bed72e6b9d06d8e4e12371cb"
+                    "bytes": "0f67a1ade1bdd0e125c430dffb4bbc5bcfbde1f6b65a689056ea91c0cf192fcf"
                   }
                 ]
               },
@@ -439,5 +442,52 @@
       }
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "escrow_created"
+              },
+              {
+                "u64": "1"
+              }
+            ],
+            "data": {
+              "vec": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                },
+                {
+                  "i128": "1000"
+                },
+                {
+                  "vec": [
+                    {
+                      "symbol": "Pending"
+                    }
+                  ]
+                },
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    }
+  ]
 }

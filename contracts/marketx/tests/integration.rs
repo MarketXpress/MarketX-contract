@@ -1,5 +1,5 @@
-use soroban_sdk::{Env, Address};
 use marketx::{Contract, ContractClient};
+use soroban_sdk::{Address, Env};
 
 fn setup() -> (Env, Address) {
     let env = Env::default();

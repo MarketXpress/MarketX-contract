@@ -86,7 +86,7 @@
 //! - Reentrancy protection on critical paths
 //! - Comprehensive input validation
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
 mod types;
@@ -447,16 +447,6 @@ impl Contract {
             .set(&DataKey::TotalFundedAmount, &(current_total + amount));
 
         // Emit event
-        let mut escrow_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowIds)
-            .unwrap_or(Vec::new(&env));
-        escrow_ids.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowIds, &escrow_ids);
-
         let event = EscrowCreatedEvent {
             escrow_id,
             buyer,

@@ -1480,6 +1480,3 @@ fn test_escrow_without_items_uses_full_release() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
-
-
-

@@ -15,26 +15,34 @@ pub enum ContractError {
     InvalidTransition = 14,
     RefundAmountExceedsEscrow = 15,
     RefundWindowExpired = 16,
+    InvalidDisputeResolution = 17,
 
     // Refunds
     RefundAlreadyRequested = 20,
-    RefundNotFound = 21,
+    RefundRequestNotFound = 21,
 
     // Security
     ReentrancyDetected = 30,
 
-    // 🔒 Circuit Breaker
+    // Circuit Breaker
     ContractPaused = 31,
 
-    // 🔢 Counter
+    // Counter
     EscrowIdOverflow = 40,
 
     // Fee
     InvalidFeeConfig = 50,
+    FeeBelowMinimum = 51,
 
     // Metadata
     MetadataTooLarge = 60,
 
     // Duplicates
     DuplicateEscrow = 70,
+
+    // Items
+    ItemNotFound = 80,
+    ItemAlreadyReleased = 81,
+    TooManyItems = 82,
+    ItemAmountInvalid = 83,
 }

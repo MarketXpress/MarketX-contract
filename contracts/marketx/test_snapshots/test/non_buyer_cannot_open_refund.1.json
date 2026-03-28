@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0,
     "mux_id": 0
   },
@@ -22,7 +22,7 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 },
                 {
-                  "u32": 250
+                  "u32": 0
                 }
               ]
             }
@@ -47,13 +47,10 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 },
                 {
                   "i128": "1000"
-                },
-                {
-                  "bytes": "6f726465725f7265663a3132333435"
                 },
                 "void"
               ]
@@ -63,7 +60,6 @@
         }
       ]
     ],
-    [],
     []
   ],
   "ledger": {
@@ -130,12 +126,6 @@
                   },
                   {
                     "key": {
-                      "symbol": "arbiter"
-                    },
-                    "val": "void"
-                  },
-                  {
-                    "key": {
                       "symbol": "buyer"
                     },
                     "val": {
@@ -146,9 +136,7 @@
                     "key": {
                       "symbol": "metadata"
                     },
-                    "val": {
-                      "bytes": "6f726465725f7265663a3132333435"
-                    }
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -175,7 +163,7 @@
                       "symbol": "token"
                     },
                     "val": {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                     }
                   }
                 ]
@@ -223,7 +211,7 @@
                     "symbol": "EscrowHash"
                   },
                   {
-                    "bytes": "77bad130573328c4dc48f06c45e01857eda309329118db8574ea440681a71d45"
+                    "bytes": "97b3b75cb25d66a2f9be4cf21aa9218f64f13563bed72e6b9d06d8e4e12371cb"
                   }
                 ]
               },
@@ -281,7 +269,7 @@
               },
               "durability": "persistent",
               "val": {
-                "u32": 250
+                "u32": 0
               }
             }
           },

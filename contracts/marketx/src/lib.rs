@@ -440,15 +440,6 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalFundedAmount)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalFundedAmount, &(current_total + amount));
-
         // Emit event
         let event = EscrowCreatedEvent {
             escrow_id,
@@ -533,6 +524,13 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    pub fn get_total_released_amount(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0)
+    }
+
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
@@ -559,6 +557,15 @@ impl Contract {
             &env.current_contract_address(),
             &escrow.amount,
         );
+
+        let current_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalFundedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalFundedAmount, &(current_total + escrow.amount));
 
         Ok(())
     }
@@ -636,6 +643,15 @@ impl Contract {
         }
         .publish(&env);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
 
         Ok(())
     }
@@ -723,6 +739,15 @@ impl Contract {
                 escrow.buyer.clone(),
             );
         }
+
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + item.amount));
 
         // 11. Save updated escrow
         env.storage()
@@ -898,6 +923,15 @@ impl Contract {
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
 
         Ok(())
     }

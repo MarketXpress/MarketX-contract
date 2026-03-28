@@ -714,6 +714,7 @@ impl Contract {
         let event = FundsReleasedEvent {
             escrow_id,
             amount: item.amount,
+            fee: 0,
         };
         event.publish(&env);
 
@@ -881,7 +882,7 @@ impl Contract {
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Released;
-        } else {
+        } else if resolution == 1 {
             // Refund to buyer
             token_client.transfer(
                 &env.current_contract_address(),
@@ -889,6 +890,8 @@ impl Contract {
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Refunded;
+        } else {
+            return Err(ContractError::InvalidEscrowState);
         }
 
         env.storage()

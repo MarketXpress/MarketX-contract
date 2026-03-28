@@ -368,26 +368,55 @@ impl Contract {
         let actor = escrow.buyer.clone();
         let from_status = escrow.status.clone();
 
-        // 4. Transfer funds from contract to seller via token interface
+        // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
+        let fee_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(0);
+        let fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+        let seller_amount = escrow.amount - fee;
+
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+
+        // 5. Transfer seller_amount to seller
         token_client.transfer(
             &env.current_contract_address(),
             &escrow.seller,
-            &escrow.amount,
+            &seller_amount,
         );
 
-        // 5. Update escrow status to Released
+        // 6. Route fee to fee collector (only if fee > 0)
+        if fee > 0 {
+            let fee_collector: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::FeeCollector)
+                .ok_or(ContractError::InvalidFeeConfig)?;
+
+            token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
+
+            FeeCollectedEvent {
+                escrow_id,
+                fee_collector,
+                fee,
+            }
+            .publish(&env);
+        }
+
+        // 7. Update escrow status to Released
         escrow.status = EscrowStatus::Released;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        // 6. Emit FundsReleasedEvent
-        let event = FundsReleasedEvent {
+        // 8. Emit FundsReleasedEvent (amount = full escrow amount, fee = calculated fee)
+        FundsReleasedEvent {
             escrow_id,
             amount: escrow.amount,
-        };
-        event.publish(&env);
+            fee,
+        }
+        .publish(&env);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
         Ok(())

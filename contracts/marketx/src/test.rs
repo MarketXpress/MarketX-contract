@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![rustfmt::skip]
 extern crate std;
 
 use soroban_sdk::testutils::Events;

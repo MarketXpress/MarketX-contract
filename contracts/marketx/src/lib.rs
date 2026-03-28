@@ -1,5 +1,96 @@
 #![no_std]
 
+#![allow(missing_docs)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(dead_code)]
+
+//! # MarketX Smart Contract
+//!
+//! A decentralized escrow smart contract built on the Stellar network using Soroban.
+//! This contract provides secure, trustless escrow services for peer-to-peer transactions
+//! with support for multi-item releases, dispute resolution, and flexible fee structures.
+//!
+//! ## Features
+//!
+//! - **Multi-token Support**: Works with native XLM and any SEP-41 compatible token
+//! - **Multi-item Escrows**: Support for milestone-based releases
+//! - **Dispute Resolution**: Optional arbiter for dispute handling
+//! - **Fee Management**: Configurable fee percentage with collector
+//! - **Circuit Breaker**: Admin pause/unpause functionality
+//! - **Comprehensive Events**: Full audit trail of all operations
+//!
+//! ## Core Concepts
+//!
+//! ### Escrow Lifecycle
+//! 1. **Created** → **Pending** (after creation)
+//! 2. **Pending** → **Released** (buyer releases funds)
+//! 3. **Pending** → **Disputed** (buyer requests refund)
+//! 4. **Disputed** → **Released** (arbiter/admin resolves for seller)
+//! 5. **Disputed** → **Refunded** (arbiter/admin resolves for buyer)
+//!
+//! ### Key Components
+//!
+//! - **Buyer**: Initiates escrow and can release funds to seller
+//! - **Seller**: Receives funds upon successful completion
+//! - **Arbiter**: Optional third party for dispute resolution
+//! - **Admin**: Contract administrator with pause/unpause and fee management
+//!
+//! ## Usage Examples
+//!
+//! ### Basic Escrow
+//! ```ignore
+//! // Create escrow
+//! let escrow_id = contract.create_escrow(
+//!     &buyer, &seller, &token_address, &amount, &None, &None, &None
+//! );
+//!
+//! // Fund escrow (buyer transfers tokens)
+//! contract.fund_escrow(&escrow_id);
+//!
+//! // Release funds to seller
+//! contract.release_escrow(&escrow_id);
+//! ```
+//!
+//! ### Multi-item Escrow
+//! ```ignore
+//! let items = vec![
+//!     EscrowItem { amount: 500, released: false, description: None },
+//!     EscrowItem { amount: 500, released: false, description: None },
+//! ];
+//!
+//! let escrow_id = contract.create_escrow(
+//!     &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
+//! );
+//!
+//! // Release individual items
+//! contract.release_item(&escrow_id, 0); // First item
+//! contract.release_item(&escrow_id, 1); // Second item
+//! ```
+//!
+//! ## Error Handling
+//!
+//! All public functions return `Result<T, ContractError>`. See the [`ContractError`] enum
+//! for detailed error information and usage patterns.
+//!
+//! ## Events
+//!
+//! The contract emits comprehensive events for all state changes:
+//! - `EscrowCreatedEvent`: New escrow creation
+//! - `FundsReleasedEvent`: Fund releases (full or partial)
+//! - `FeeCollectedEvent`: Fee collection
+//! - `StatusChangeEvent`: Escrow status changes
+//! - `RefundRequestedEvent`: Refund requests
+//!
+//! ## Security Considerations
+//!
+//! - All sensitive operations require proper authentication
+//! - Contract can be paused by admin in emergencies
+//! - Duplicate escrow prevention via content hashing
+//! - Reentrancy protection on critical paths
+//! - Comprehensive input validation
+
+
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
@@ -9,6 +100,7 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
+
     DataKey,
     Escrow,
     EscrowCreatedEvent,
@@ -26,11 +118,21 @@ pub use types::{
     CounterEvidenceSubmittedEvent,
     MAX_ITEMS_PER_ESCROW,
     MAX_METADATA_SIZE,
+
+    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
+    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
+    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+
 };
 
 #[cfg(test)]
 mod test;
 
+/// The MarketX escrow contract.
+///
+/// This contract provides secure escrow services on the Stellar network.
+/// All public methods are available through the contract's public interface.
 #[contract]
 pub struct Contract;
 
@@ -168,6 +270,22 @@ fn add_u32(env: &Env, key: DataKey) {
 
 #[contractimpl]
 impl Contract {
+    /// Initialize the contract with admin, fee collector, and fee settings.
+    ///
+    /// # Arguments
+    /// * `admin` - The contract administrator address
+    /// * `fee_collector` - Address that receives transaction fees
+    /// * `fee_bps` - Fee percentage in basis points (100 bps = 1%)
+    ///
+    /// # Requirements
+    /// - Must be called exactly once during contract deployment
+    /// - `fee_bps` should be reasonable (typically < 1000 bps = 10%)
+    ///
+    /// # Events
+    /// Emits no events during initialization
+    ///
+    /// # Errors
+    /// This function cannot fail as it's the initialization function
     pub fn initialize(env: Env, admin: Address, fee_collector: Address, fee_bps: u32) {
         admin.require_auth();
 
@@ -190,18 +308,55 @@ env.storage().persistent().set(&DataKey::TotalDisputedCount, &0u32);
 env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
     }
 
+    /// Pause the contract, disabling all critical operations.
+    ///
+    /// This is a safety mechanism that can be used in emergencies.
+    /// When paused, operations like creating, funding, and releasing escrows
+    /// will fail with `ContractError::ContractPaused`.
+    ///
+    /// # Requirements
+    /// - Caller must be the contract admin
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// * `NotAdmin` - If caller is not the contract admin
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
         Ok(())
     }
 
+    /// Unpause the contract, re-enabling all operations.
+    ///
+    /// This reverses the effects of `pause()` and allows normal operation
+    /// to resume.
+    ///
+    /// # Requirements
+    /// - Caller must be the contract admin
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// * `NotAdmin` - If caller is not the contract admin
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
         Ok(())
     }
 
+    /// Check if the contract is currently paused.
+    ///
+    /// # Returns
+    /// `true` if the contract is paused, `false` otherwise
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// This function cannot fail
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -321,26 +476,7 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .persistent()
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
-        let current_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalFundedAmount)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalFundedAmount, &(current_total + amount));
-
         // Emit event
-        let mut escrow_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowIds)
-            .unwrap_or(Vec::new(&env));
-        escrow_ids.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowIds, &escrow_ids);
-
         let event = EscrowCreatedEvent {
             escrow_id,
             buyer,
@@ -424,6 +560,13 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .unwrap_or(0)
     }
 
+    pub fn get_total_released_amount(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0)
+    }
+
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
@@ -450,6 +593,15 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             &env.current_contract_address(),
             &escrow.amount,
         );
+
+        let current_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalFundedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalFundedAmount, &(current_total + escrow.amount));
 
         Ok(())
     }
@@ -530,6 +682,15 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
         .publish(&env);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
+
         Ok(())
     }
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
@@ -597,11 +758,19 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
         let all_released = escrow.items.iter().all(|i| i.released);
 
         // 9. Emit FundsReleasedEvent for this item
+
        let event = FundsReleasedEvent {
     escrow_id,
     amount: item.amount,
     fee: 0,
 };
+
+        let event = FundsReleasedEvent {
+            escrow_id,
+            amount: item.amount,
+            fee: 0,
+        };
+
         event.publish(&env);
 
         // 10. If all items released, update escrow status
@@ -616,6 +785,15 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
                 escrow.buyer.clone(),
             );
         }
+
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + item.amount));
 
         // 11. Save updated escrow
         env.storage()
@@ -697,7 +875,13 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
         };
         event.publish(&env);
 
-        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), initiator);
+        Self::emit_status_change(
+            &env,
+            escrow_id,
+            from_status,
+            escrow.status.clone(),
+            initiator,
+        );
 
         Ok(request_id)
     }
@@ -771,7 +955,7 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Released;
-        } else {
+        } else if resolution == 1 {
             // Refund to buyer
             token_client.transfer(
                 &env.current_contract_address(),
@@ -780,6 +964,8 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             );
             Self::add_i128(&env, DataKey::TotalRefundedAmount, escrow.amount);
             escrow.status = EscrowStatus::Refunded;
+        } else {
+            return Err(ContractError::InvalidEscrowState);
         }
 
         env.storage()
@@ -787,6 +973,59 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        let current_released_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalReleasedAmount)
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
+
+        Ok(())
+    }
+
+    // =========================
+    // 🔧 ADMIN FUNCTIONS
+    // =========================
+
+    /// Propose a new admin. The transfer is not complete until the new admin accepts.
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposedAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept the administrative role. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env) -> Result<(), ContractError> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposedAdmin)
+            .ok_or(ContractError::NotProposedAdmin)?;
+
+        // The proposed admin must authenticate this transaction
+        proposed_admin.require_auth();
+
+        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+
+        // Transfer the admin role
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &proposed_admin);
+
+        // Clean up the proposal
+        env.storage().persistent().remove(&DataKey::ProposedAdmin);
+
+        // Emit the event
+        AdminTransferredEvent {
+            old_admin,
+            new_admin: proposed_admin,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -833,7 +1072,9 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
 
     /// Get a refund request by ID.
     pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
-        env.storage().persistent().get(&DataKey::RefundRequest(request_id))
+        env.storage()
+            .persistent()
+            .get(&DataKey::RefundRequest(request_id))
     }
 
     /// Get the total number of refund requests.

@@ -1,4 +1,90 @@
 #![no_std]
+#![warn(missing_docs)]
+
+//! # MarketX Smart Contract
+//!
+//! A decentralized escrow smart contract built on the Stellar network using Soroban.
+//! This contract provides secure, trustless escrow services for peer-to-peer transactions
+//! with support for multi-item releases, dispute resolution, and flexible fee structures.
+//!
+//! ## Features
+//!
+//! - **Multi-token Support**: Works with native XLM and any SEP-41 compatible token
+//! - **Multi-item Escrows**: Support for milestone-based releases
+//! - **Dispute Resolution**: Optional arbiter for dispute handling
+//! - **Fee Management**: Configurable fee percentage with collector
+//! - **Circuit Breaker**: Admin pause/unpause functionality
+//! - **Comprehensive Events**: Full audit trail of all operations
+//!
+//! ## Core Concepts
+//!
+//! ### Escrow Lifecycle
+//! 1. **Created** → **Pending** (after creation)
+//! 2. **Pending** → **Released** (buyer releases funds)
+//! 3. **Pending** → **Disputed** (buyer requests refund)
+//! 4. **Disputed** → **Released** (arbiter/admin resolves for seller)
+//! 5. **Disputed** → **Refunded** (arbiter/admin resolves for buyer)
+//!
+//! ### Key Components
+//!
+//! - **Buyer**: Initiates escrow and can release funds to seller
+//! - **Seller**: Receives funds upon successful completion
+//! - **Arbiter**: Optional third party for dispute resolution
+//! - **Admin**: Contract administrator with pause/unpause and fee management
+//!
+//! ## Usage Examples
+//!
+//! ### Basic Escrow
+//! ```ignore
+//! // Create escrow
+//! let escrow_id = contract.create_escrow(
+//!     &buyer, &seller, &token_address, &amount, &None, &None, &None
+//! );
+//!
+//! // Fund escrow (buyer transfers tokens)
+//! contract.fund_escrow(&escrow_id);
+//!
+//! // Release funds to seller
+//! contract.release_escrow(&escrow_id);
+//! ```
+//!
+//! ### Multi-item Escrow
+//! ```ignore
+//! let items = vec![
+//!     EscrowItem { amount: 500, released: false, description: None },
+//!     EscrowItem { amount: 500, released: false, description: None },
+//! ];
+//!
+//! let escrow_id = contract.create_escrow(
+//!     &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
+//! );
+//!
+//! // Release individual items
+//! contract.release_item(&escrow_id, 0); // First item
+//! contract.release_item(&escrow_id, 1); // Second item
+//! ```
+//!
+//! ## Error Handling
+//!
+//! All public functions return `Result<T, ContractError>`. See the [`ContractError`] enum
+//! for detailed error information and usage patterns.
+//!
+//! ## Events
+//!
+//! The contract emits comprehensive events for all state changes:
+//! - `EscrowCreatedEvent`: New escrow creation
+//! - `FundsReleasedEvent`: Fund releases (full or partial)
+//! - `FeeCollectedEvent`: Fee collection
+//! - `StatusChangeEvent`: Escrow status changes
+//! - `RefundRequestedEvent`: Refund requests
+//!
+//! ## Security Considerations
+//!
+//! - All sensitive operations require proper authentication
+//! - Contract can be paused by admin in emergencies
+//! - Duplicate escrow prevention via content hashing
+//! - Reentrancy protection on critical paths
+//! - Comprehensive input validation
 
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
 
@@ -23,6 +109,10 @@ pub use types::{
 #[cfg(test)]
 mod test;
 
+/// The MarketX escrow contract.
+///
+/// This contract provides secure escrow services on the Stellar network.
+/// All public methods are available through the contract's public interface.
 #[contract]
 pub struct Contract;
 
@@ -149,6 +239,22 @@ impl Contract {
 
 #[contractimpl]
 impl Contract {
+    /// Initialize the contract with admin, fee collector, and fee settings.
+    ///
+    /// # Arguments
+    /// * `admin` - The contract administrator address
+    /// * `fee_collector` - Address that receives transaction fees
+    /// * `fee_bps` - Fee percentage in basis points (100 bps = 1%)
+    ///
+    /// # Requirements
+    /// - Must be called exactly once during contract deployment
+    /// - `fee_bps` should be reasonable (typically < 1000 bps = 10%)
+    ///
+    /// # Events
+    /// Emits no events during initialization
+    ///
+    /// # Errors
+    /// This function cannot fail as it's the initialization function
     pub fn initialize(env: Env, admin: Address, fee_collector: Address, fee_bps: u32) {
         admin.require_auth();
 
@@ -168,18 +274,55 @@ impl Contract {
             .set(&DataKey::TotalFundedAmount, &0i128);
     }
 
+    /// Pause the contract, disabling all critical operations.
+    ///
+    /// This is a safety mechanism that can be used in emergencies.
+    /// When paused, operations like creating, funding, and releasing escrows
+    /// will fail with `ContractError::ContractPaused`.
+    ///
+    /// # Requirements
+    /// - Caller must be the contract admin
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// * `NotAdmin` - If caller is not the contract admin
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
         Ok(())
     }
 
+    /// Unpause the contract, re-enabling all operations.
+    ///
+    /// This reverses the effects of `pause()` and allows normal operation
+    /// to resume.
+    ///
+    /// # Requirements
+    /// - Caller must be the contract admin
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// * `NotAdmin` - If caller is not the contract admin
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
         Ok(())
     }
 
+    /// Check if the contract is currently paused.
+    ///
+    /// # Returns
+    /// `true` if the contract is paused, `false` otherwise
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// This function cannot fail
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .persistent()

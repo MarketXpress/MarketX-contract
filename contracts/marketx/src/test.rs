@@ -5,6 +5,8 @@ use arbitrary::{Arbitrary, Unstructured};
 use proptest::prelude::*;
 use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _, Events as _, MockAuth, MockAuthInvoke},
+    Address, Bytes, Env, Event, IntoVal,
     testutils::{storage::Persistent as _, Address as _, Events as _},
     Address, Bytes, Env, Event, Vec,
 };
@@ -37,6 +39,42 @@ fn admin_can_pause_and_unpause() {
 
     client.unpause();
     assert!(!client.is_paused());
+}
+
+#[test]
+#[should_panic] // SDK panic message for auth trap
+fn non_admin_cannot_pause() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    // Initialize the contract using MockAuth for the admin
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    // Call pause as non_admin, which expects admin auth.
+    // This should trap, because admin.require_auth() fails.
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "pause",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .pause();
 }
 
 #[test]

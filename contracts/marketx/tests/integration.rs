@@ -25,6 +25,7 @@ fn bump_escrow_extends_ttl_via_public_api() {
         &1000,
         &Some(Bytes::from_slice(&env, b"integration-ttl")),
         &None,
+        &None,
     );
 
     let escrow_key = DataKey::Escrow(escrow_id);

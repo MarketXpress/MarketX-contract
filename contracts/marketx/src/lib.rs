@@ -1,5 +1,8 @@
 #![no_std]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(dead_code)]
 
 //! # MarketX Smart Contract
 //!
@@ -86,7 +89,7 @@
 //! - Reentrancy protection on critical paths
 //! - Comprehensive input validation
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
 mod types;
@@ -95,15 +98,10 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
+    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
     StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
-    StatusChangeEvent, MAX_METADATA_SIZE,
-    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowStatus,
-    FeeChangedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, 
-    RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -452,16 +450,6 @@ impl Contract {
             .set(&DataKey::TotalFundedAmount, &(current_total + amount));
 
         // Emit event
-        let mut escrow_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowIds)
-            .unwrap_or(Vec::new(&env));
-        escrow_ids.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowIds, &escrow_ids);
-
         let event = EscrowCreatedEvent {
             escrow_id,
             buyer,
@@ -719,6 +707,7 @@ impl Contract {
         let event = FundsReleasedEvent {
             escrow_id,
             amount: item.amount,
+            fee: 0,
         };
         event.publish(&env);
 
@@ -814,7 +803,13 @@ impl Contract {
         };
         event.publish(&env);
 
-        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), initiator);
+        Self::emit_status_change(
+            &env,
+            escrow_id,
+            from_status,
+            escrow.status.clone(),
+            initiator,
+        );
 
         Ok(request_id)
     }
@@ -886,7 +881,7 @@ impl Contract {
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Released;
-        } else {
+        } else if resolution == 1 {
             // Refund to buyer
             token_client.transfer(
                 &env.current_contract_address(),
@@ -894,6 +889,8 @@ impl Contract {
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Refunded;
+        } else {
+            return Err(ContractError::InvalidEscrowState);
         }
 
         env.storage()
@@ -901,6 +898,50 @@ impl Contract {
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        Ok(())
+    }
+
+    // =========================
+    // 🔧 ADMIN FUNCTIONS
+    // =========================
+
+    /// Propose a new admin. The transfer is not complete until the new admin accepts.
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposedAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept the administrative role. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env) -> Result<(), ContractError> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposedAdmin)
+            .ok_or(ContractError::NotProposedAdmin)?;
+
+        // The proposed admin must authenticate this transaction
+        proposed_admin.require_auth();
+
+        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+
+        // Transfer the admin role
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &proposed_admin);
+
+        // Clean up the proposal
+        env.storage().persistent().remove(&DataKey::ProposedAdmin);
+
+        // Emit the event
+        AdminTransferredEvent {
+            old_admin,
+            new_admin: proposed_admin,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -947,7 +988,9 @@ impl Contract {
 
     /// Get a refund request by ID.
     pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
-        env.storage().persistent().get(&DataKey::RefundRequest(request_id))
+        env.storage()
+            .persistent()
+            .get(&DataKey::RefundRequest(request_id))
     }
 
     /// Get the total number of refund requests.

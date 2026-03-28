@@ -1,14 +1,11 @@
 #![cfg(test)]
+#![rustfmt::skip]
 extern crate std;
 
-use arbitrary::{Arbitrary, Unstructured};
-use proptest::prelude::*;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
+use soroban_sdk::testutils::Events;
 use soroban_sdk::{
-    testutils::{storage::Persistent as _, Address as _, Events as _, MockAuth, MockAuthInvoke},
-    Address, Bytes, Env, Event, IntoVal,
-    testutils::{storage::Persistent as _, Address as _, Events as _},
-    Address, Bytes, Env, Event, Vec,
+    testutils::{storage::Persistent as _, Address as _, MockAuth, MockAuthInvoke},
+    Address, Bytes, Env, Event, IntoVal, Vec,
 };
 
 use crate::errors::ContractError;
@@ -75,6 +72,120 @@ fn non_admin_cannot_pause() {
             },
         }])
         .pause();
+}
+
+#[test]
+fn admin_rotation_flow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250);
+
+    // Transfer and accept admin
+    client.transfer_admin(&new_admin);
+    client.accept_admin();
+
+    // Verify new admin is active
+    assert_eq!(client.get_admin().unwrap(), new_admin);
+}
+
+#[test]
+fn accept_admin_fails_if_none_proposed() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250);
+
+    // Attempt to accept without any proposal
+    let result = client.try_accept_admin();
+    assert_eq!(result, Err(Ok(ContractError::NotProposedAdmin)));
+}
+
+#[test]
+#[should_panic]
+fn transfer_admin_fails_if_not_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let not_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    // Attempt to transfer as not_admin. It should trap since admin.require_auth() fails.
+    client
+        .mock_auths(&[MockAuth {
+            address: &not_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .transfer_admin(&new_admin);
+}
+
+#[test]
+#[should_panic]
+fn accept_admin_fails_if_unauthorized() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let not_proposed = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .transfer_admin(&new_admin);
+
+    // Attempt to accept with the wrong person mocked
+    client
+        .mock_auths(&[MockAuth {
+            address: &not_proposed,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .accept_admin();
 }
 
 #[test]
@@ -685,7 +796,7 @@ fn test_arbiter_can_resolve_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &true);
+    client.resolve_dispute(&escrow_id, &1);
 
     assert_eq!(token.balance(&seller), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -771,7 +882,7 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &false);
+    client.resolve_dispute(&escrow_id, &0);
 
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -894,7 +1005,7 @@ fn test_resolve_dispute_fails_if_not_disputed() {
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &Some(arbiter), &None);
 
-    let result = client.try_resolve_dispute(&escrow_id, &false);
+    let result = client.try_resolve_dispute(&escrow_id, &0);
     assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
 }
 
@@ -1370,6 +1481,3 @@ fn test_escrow_without_items_uses_full_release() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
-
-
-

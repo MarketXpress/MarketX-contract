@@ -9,9 +9,9 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
-    MAX_METADATA_SIZE,
+    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    StatusChangeEvent, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]

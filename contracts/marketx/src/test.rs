@@ -2,8 +2,8 @@
 extern crate std;
 
 use soroban_sdk::{
-    testutils::{storage::Persistent as _, Address as _, Events as _},
-    Address, Bytes, Env, Event,
+    testutils::{storage::Persistent as _, Address as _, Events as _, MockAuth, MockAuthInvoke},
+    Address, Bytes, Env, Event, IntoVal,
 };
 
 use crate::errors::ContractError;
@@ -36,11 +36,41 @@ fn admin_can_pause_and_unpause() {
     assert!(!client.is_paused());
 }
 
-// #[test]
-// #[should_panic(expected = "NotAdmin")]
-// fn non_admin_cannot_pause() {
-//     // TODO: Update to use MockAuth for non-admin auth failure check in Soroban SDK v25
-// }
+#[test]
+#[should_panic] // SDK panic message for auth trap
+fn non_admin_cannot_pause() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    // Initialize the contract using MockAuth for the admin
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    // Call pause as non_admin, which expects admin auth.
+    // This should trap, because admin.require_auth() fails.
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "pause",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .pause();
+}
 
 #[test]
 fn escrow_actions_blocked_when_paused() {

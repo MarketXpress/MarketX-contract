@@ -1,4 +1,7 @@
-use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Vec};
+
+#[cfg(test)]
+use soroban_sdk::Env;
 
 /// Returns the contract address for the native XLM token (Stellar Asset Contract).
 ///
@@ -36,6 +39,7 @@ pub enum DataKey {
     MinFee,
     ReentrancyLock,
     Admin,
+    ProposedAdmin,
     Paused,
     RefundRequest(u64),
     RefundCount,
@@ -45,10 +49,14 @@ pub enum DataKey {
     InitialValue,
     EscrowHash(BytesN<32>),
     TotalFundedAmount,
+
     TotalRefundedAmount,
     TotalDisputedCount,
     TotalFeesCollected,
     EscrowIds,
+
+    TotalReleasedAmount,
+
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -141,6 +149,13 @@ pub struct FeeChangedEvent {
     pub actor: Address,
 }
 
+#[contractevent(topics = ["admin_transferred"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferredEvent {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RefundReason {
@@ -183,6 +198,8 @@ pub struct RefundHistoryEntry {
 }
 
 
+
+
 #[contractevent(topics = ["refund_requested"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundRequestedEvent {
@@ -192,7 +209,7 @@ pub struct RefundRequestedEvent {
     pub evidence_hash: Option<Bytes>,
 }
 
-#[contracttype]
+#[contractevent(topics = ["counter_evidence"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CounterEvidenceSubmittedEvent {
     pub request_id: u64,

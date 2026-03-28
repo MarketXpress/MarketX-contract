@@ -64,6 +64,16 @@ pub struct FundsReleasedEvent {
     #[topic]
     pub escrow_id: u64,
     pub amount: i128,
+    pub fee: i128,
+}
+
+#[contractevent(topics = ["fee_collected"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub fee_collector: Address,
+    pub fee: i128,
 }
 
 #[contractevent(topics = ["status_change"], data_format = "vec")]

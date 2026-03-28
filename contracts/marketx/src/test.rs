@@ -9,7 +9,10 @@ use soroban_sdk::{
 use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
 use crate::types::MAX_METADATA_SIZE;
-use crate::{Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent, StatusChangeEvent};
+use crate::{
+    Contract, ContractClient, EscrowCreatedEvent, FeeCollectedEvent, FundsReleasedEvent,
+    StatusChangeEvent,
+};
 
 fn setup<'a>() -> (Env, ContractClient<'a>) {
     let env = Env::default();
@@ -718,6 +721,7 @@ fn test_release_emits_funds_and_status_change_events() {
     let expected_release = FundsReleasedEvent {
         escrow_id,
         amount: 1000,
+        fee: 0,
     };
     let expected_status = StatusChangeEvent {
         escrow_id,
@@ -910,4 +914,163 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
 
     let result = client.try_resolve_dispute(&999u64, &0u32);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+// =========================
+// FEE ROUTING TESTS
+// =========================
+
+#[test]
+fn test_release_routes_fee_to_collector() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    // 250 bps = 2.5%
+    client.initialize(&admin, &fee_collector, &250);
+
+    // Fund contract with 1000 tokens
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    // fee = 1000 * 250 / 10_000 = 25
+    assert_eq!(token.balance(&seller), 975);
+    assert_eq!(token.balance(&fee_collector), 25);
+    assert_eq!(token.balance(&client.address), 0);
+}
+
+#[test]
+fn test_release_zero_fee_sends_full_amount_to_seller() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &fee_collector, &0);
+
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    // fee = 0, seller gets everything
+    assert_eq!(token.balance(&seller), 1000);
+    assert_eq!(token.balance(&fee_collector), 0);
+}
+
+#[test]
+fn test_release_fee_rounding_floors() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    // 300 bps = 3%, amount = 1 → fee = 1 * 300 / 10_000 = 0 (floor)
+    client.initialize(&admin, &fee_collector, &300);
+
+    token_admin.mint(&client.address, &1);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    // fee floors to 0, seller gets full 1
+    assert_eq!(token.balance(&seller), 1);
+    assert_eq!(token.balance(&fee_collector), 0);
+}
+
+#[test]
+fn test_release_emits_fee_collected_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &fee_collector, &500); // 5%
+
+    token_admin.mint(&client.address, &2000);
+
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token_id.address(), &2000, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    // fee = 2000 * 500 / 10_000 = 100
+    let events = env.events().all().filter_by_contract(&client.address);
+    let emitted = events.events().to_vec();
+
+    let expected_fee_event = FeeCollectedEvent {
+        escrow_id,
+        fee_collector: fee_collector.clone(),
+        fee: 100,
+    };
+    let expected_release = FundsReleasedEvent {
+        escrow_id,
+        amount: 2000,
+        fee: 100,
+    };
+    let expected_status = StatusChangeEvent {
+        escrow_id,
+        from_status: crate::types::EscrowStatus::Pending,
+        to_status: crate::types::EscrowStatus::Released,
+        actor: buyer,
+    };
+
+    // Events order: EscrowCreated (from create_escrow), FeeCollected, FundsReleased, StatusChange
+    assert!(emitted.contains(&expected_fee_event.to_xdr(&env, &client.address)));
+    assert!(emitted.contains(&expected_release.to_xdr(&env, &client.address)));
+    assert!(emitted.contains(&expected_status.to_xdr(&env, &client.address)));
+}
+
+#[test]
+fn test_release_max_fee_bps() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let fee_collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    // Max allowed fee = 1000 bps = 10%
+    client.initialize(&admin, &fee_collector, &1000);
+
+    token_admin.mint(&client.address, &10000);
+
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token_id.address(), &10000, &None, &None);
+    client.release_escrow(&escrow_id);
+
+    // fee = 10000 * 1000 / 10_000 = 1000
+    assert_eq!(token.balance(&seller), 9000);
+    assert_eq!(token.balance(&fee_collector), 1000);
 }

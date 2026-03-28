@@ -847,7 +847,53 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0);
 
-    let result = client.try_resolve_dispute(&999u64, &false);
+    let result = client.try_resolve_dispute(&999u64, &0u32);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+#[test]
+fn test_buyer_can_request_refund() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let amount = 1000i128;
+    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Create escrow
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &amount, &None, &None);
+
+    // Request refund
+    let request_id = client.refund_escrow(&escrow_id, &buyer, &amount, &crate::RefundReason::ProductNotReceived, &evidence_hash);
+
+    // Verify refund request was created
+    let refund_request = client.get_refund_request(&request_id).unwrap();
+    assert_eq!(refund_request.escrow_id, escrow_id);
+    assert_eq!(refund_request.requester, buyer);
+    assert_eq!(refund_request.amount, amount);
+    assert_eq!(refund_request.reason, crate::RefundReason::ProductNotReceived);
+    assert_eq!(refund_request.status, crate::RefundStatus::Pending);
+
+    // Verify escrow status changed to Disputed
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_refund_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_refund_escrow(&999, &buyer, &1000, &crate::RefundReason::ProductNotReceived, &evidence_hash);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }
 
@@ -855,7 +901,8 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
 // FUZZ / PROPERTY TESTS
 // =========================
 
-// =========================
+use arbitrary::{Arbitrary, Unstructured};
+use proptest::prelude::*;
 
 #[derive(Debug, Clone, Arbitrary)]
 enum FuzzAction {
@@ -918,7 +965,8 @@ fn run_fuzz_actions(actions: &[FuzzAction]) {
             }
             FuzzAction::RefundBuyer => {
                 if let Some(id) = escrow_id {
-                    let _ = client.try_refund_escrow(&id, &buyer);
+                    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+                    let _ = client.try_refund_escrow(&id, &buyer, &1000, &crate::RefundReason::ProductNotReceived, &evidence_hash);
                 }
             }
             FuzzAction::ResolveDisputeSeller => {

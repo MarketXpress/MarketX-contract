@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
 
 mod errors;
 mod types;
@@ -10,11 +10,8 @@ use soroban_sdk::xdr::ToXdr;
 pub use errors::ContractError;
 pub use types::{
     CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowStatus,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
-    MAX_METADATA_SIZE,
+    FeeChangedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, 
+    RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -356,7 +353,6 @@ impl Contract {
             &escrow.amount,
         );
 
-        let from_status = escrow.status.clone();
         // 5. Update escrow status to Released
         escrow.status = EscrowStatus::Released;
         env.storage()
@@ -371,16 +367,6 @@ impl Contract {
         event.publish(&env);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
-        let status_event = StatusChangeEvent {
-            escrow_id,
-            from_status,
-            to_status: EscrowStatus::Released,
-        };
-        env.events().publish(
-            (Symbol::new(&env, "status_changed"), escrow_id),
-            status_event,
-        );
-
         Ok(())
     }
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
@@ -388,6 +374,20 @@ impl Contract {
         Ok(())
     }
 
+    /// Request a refund for an escrow.
+    /// 
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to refund
+    /// * `initiator` - The address requesting the refund (must be buyer)
+    /// * `amount` - The amount to refund
+    /// * `reason` - The reason for the refund request
+    /// * `evidence_hash` - Hash of evidence supporting the refund
+    /// 
+    /// # Requirements
+    /// * Initiator must be the buyer
+    /// * Escrow must be in Pending state
+    /// * Creates a RefundRequest tracking object
+    /// * Changes escrow status to Disputed
     pub fn refund_escrow(
         env: Env,
         escrow_id: u64,
@@ -454,69 +454,14 @@ impl Contract {
         let event = RefundRequestedEvent {
             request_id,
             escrow_id,
-            requester: initiator,
+            requester: initiator.clone(),
             evidence_hash: Some(evidence_hash),
         };
-        env.events()
-            .publish((Symbol::new(&env, "refund_requested"), request_id), event);
+        event.publish(&env);
 
-        let status_event = StatusChangeEvent {
-            escrow_id,
-            from_status,
-            to_status: EscrowStatus::Disputed,
-        };
-        env.events().publish(
-            (Symbol::new(&env, "status_changed"), escrow_id),
-            status_event,
-        );
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), initiator);
 
         Ok(request_id)
-    }
-
-    pub fn submit_counter_evidence(
-        env: Env,
-        request_id: u64,
-        responder: Address,
-        counter_evidence_hash: Bytes,
-    ) -> Result<(), ContractError> {
-        Self::assert_not_paused(&env)?;
-        responder.require_auth();
-
-        let mut refund_request: RefundRequest = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RefundRequest(request_id))
-            .ok_or(ContractError::RefundRequestNotFound)?;
-
-        let escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(refund_request.escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
-
-        if responder != escrow.seller {
-            return Err(ContractError::Unauthorized);
-        }
-
-        refund_request.counter_evidence_hash = Some(counter_evidence_hash.clone());
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RefundRequest(request_id), &refund_request);
-
-        let event = CounterEvidenceSubmittedEvent {
-            request_id,
-            escrow_id: refund_request.escrow_id,
-            responder,
-            counter_evidence_hash: Some(counter_evidence_hash),
-        };
-
-        env.events().publish(
-            (Symbol::new(&env, "counter_evidence_submitted"), request_id),
-            event,
-        );
-
-        Ok(())
     }
 
     pub fn bump_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
@@ -578,9 +523,8 @@ impl Contract {
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
-        let from_status = escrow.status.clone();
-
-        if release_to_seller {
+        if resolution == 0 {
+            // Release to seller
             token_client.transfer(
                 &env.current_contract_address(),
                 &escrow.seller,
@@ -588,6 +532,7 @@ impl Contract {
             );
             escrow.status = EscrowStatus::Released;
         } else {
+            // Refund to buyer
             token_client.transfer(
                 &env.current_contract_address(),
                 &escrow.buyer,
@@ -642,6 +587,19 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::FeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Get a refund request by ID.
+    pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
+        env.storage().persistent().get(&DataKey::RefundRequest(request_id))
+    }
+
+    /// Get the total number of refund requests.
+    pub fn get_refund_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RefundCount)
             .unwrap_or(0)
     }
 }

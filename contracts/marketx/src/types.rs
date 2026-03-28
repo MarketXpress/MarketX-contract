@@ -27,43 +27,26 @@ pub fn native_xlm_address(env: &Env) -> Address {
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    // Escrow storage
     Escrow(u64),
 
     // 🔢 Escrow Counter
     EscrowCounter,
-
-    // Fees
     FeeCollector,
     FeeBps,
     MinFee,
-
-    // Security
     ReentrancyLock,
     Admin,
     Paused,
-
-    // Refunds
     RefundRequest(u64),
     RefundCount,
     EscrowRefunds(u64),
     RefundHistory(u64),
     GlobalRefundHistory,
-
-    // Initial value for testing
     InitialValue,
-
-    // Escrow uniqueness hash (buyer + seller + metadata hash -> escrow_id)
     EscrowHash(BytesN<32>),
-
-    // Analytics
     TotalFundedAmount,
-
-    // Arbiter assigned to an escrow
-    EscrowArbiter(u64),
 }
 
-/// Maximum metadata size in bytes (1 KB)
 pub const MAX_METADATA_SIZE: u32 = 1024;
 
 /// Maximum number of items per escrow
@@ -90,8 +73,6 @@ pub struct Escrow {
     pub amount: i128,
     pub status: EscrowStatus,
     pub metadata: Option<Bytes>,
-    /// Optional arbiter mutually chosen by buyer and seller at creation time.
-    /// If set, only this address may resolve disputes for this escrow.
     pub arbiter: Option<Address>,
     /// Individual items/milestones within this escrow
     /// If empty, the entire escrow is treated as a single item
@@ -126,6 +107,16 @@ pub struct FundsReleasedEvent {
     #[topic]
     pub escrow_id: u64,
     pub amount: i128,
+    pub fee: i128,
+}
+
+#[contractevent(topics = ["fee_collected"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub fee_collector: Address,
+    pub fee: i128,
 }
 
 #[contractevent(topics = ["status_change"], data_format = "vec")]
@@ -174,6 +165,8 @@ pub struct RefundRequest {
     pub reason: RefundReason,
     pub status: RefundStatus,
     pub created_at: u64,
+    pub evidence_hash: Option<Bytes>,
+    pub counter_evidence_hash: Option<Bytes>,
 }
 
 #[contracttype]
@@ -183,4 +176,22 @@ pub struct RefundHistoryEntry {
     pub escrow_id: u64,
     pub amount: i128,
     pub refunded_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundRequestedEvent {
+    pub request_id: u64,
+    pub escrow_id: u64,
+    pub requester: Address,
+    pub evidence_hash: Option<Bytes>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CounterEvidenceSubmittedEvent {
+    pub request_id: u64,
+    pub escrow_id: u64,
+    pub responder: Address,
+    pub counter_evidence_hash: Option<Bytes>,
 }

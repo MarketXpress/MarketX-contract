@@ -31,6 +31,7 @@ pub enum ContractError {
 
     // Fee
     InvalidFeeConfig = 50,
+    FeeBelowMinimum = 51,
 
     // Metadata
     MetadataTooLarge = 60,

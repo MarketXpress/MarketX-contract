@@ -11,7 +11,7 @@ pub enum ContractError {
     // =========================
     // AUTHENTICATION ERRORS (1-9)
     // =========================
-    
+
     /// Caller is not the contract admin.
     ///
     /// This error is returned when a function requires admin privileges
@@ -19,7 +19,7 @@ pub enum ContractError {
     ///
     /// **Used in:** `assert_admin()`, `set_fee_percentage()`
     NotAdmin = 1,
-    
+
     /// Caller is not authorized to perform the requested action.
     ///
     /// This error is returned when a user attempts to perform an action
@@ -32,7 +32,7 @@ pub enum ContractError {
     // =========================
     // ESCROW ERRORS (10-19)
     // =========================
-    
+
     /// The specified escrow does not exist.
     ///
     /// This error is returned when attempting to operate on an escrow
@@ -41,7 +41,7 @@ pub enum ContractError {
     /// **Used in:** `fund_escrow()`, `release_escrow()`, `release_item()`,
     ///             `refund_escrow()`, `bump_escrow()`, `resolve_dispute()`
     EscrowNotFound = 10,
-    
+
     /// Escrow is not in the required state for the operation.
     ///
     /// This error is returned when the current escrow state does not
@@ -50,7 +50,7 @@ pub enum ContractError {
     /// **Used in:** `fund_escrow()`, `release_escrow()`, `release_item()`,
     ///             `refund_escrow()`, `resolve_dispute()`
     InvalidEscrowState = 11,
-    
+
     /// The escrow amount is invalid.
     ///
     /// This error is returned when the escrow amount is zero or negative,
@@ -62,7 +62,7 @@ pub enum ContractError {
     // =========================
     // SECURITY ERRORS (30-39)
     // =========================
-    
+
     /// Contract is currently paused.
     ///
     /// This error is returned when attempting to perform operations
@@ -74,7 +74,7 @@ pub enum ContractError {
     // =========================
     // COUNTER ERRORS (40-49)
     // =========================
-    
+
     /// Escrow ID would overflow u64.
     ///
     /// This error is returned when the contract has already created
@@ -86,7 +86,7 @@ pub enum ContractError {
     // =========================
     // FEE ERRORS (50-59)
     // =========================
-    
+
     /// Fee configuration is invalid.
     ///
     /// This error is returned when the fee configuration is malformed
@@ -98,7 +98,7 @@ pub enum ContractError {
     // =========================
     // METADATA ERRORS (60-69)
     // =========================
-    
+
     /// Metadata exceeds maximum allowed size.
     ///
     /// This error is returned when the provided metadata is larger
@@ -110,7 +110,7 @@ pub enum ContractError {
     // =========================
     // DUPLICATION ERRORS (70-79)
     // =========================
-    
+
     /// Duplicate escrow detected.
     ///
     /// This error is returned when attempting to create an escrow with
@@ -122,7 +122,7 @@ pub enum ContractError {
     // =========================
     // ITEM ERRORS (80-89)
     // =========================
-    
+
     /// Item not found in escrow.
     ///
     /// This error is returned when attempting to access an item
@@ -130,7 +130,7 @@ pub enum ContractError {
     ///
     /// **Used in:** `release_item()`
     ItemNotFound = 80,
-    
+
     /// Item has already been released.
     ///
     /// This error is returned when attempting to release an item
@@ -138,7 +138,7 @@ pub enum ContractError {
     ///
     /// **Used in:** `release_item()`
     ItemAlreadyReleased = 81,
-    
+
     /// Too many items in escrow.
     ///
     /// This error is returned when attempting to create an escrow
@@ -146,7 +146,7 @@ pub enum ContractError {
     ///
     /// **Used in:** `create_escrow()`
     TooManyItems = 82,
-    
+
     /// Item amounts don't sum to total escrow amount.
     ///
     /// This error is returned when the sum of all item amounts

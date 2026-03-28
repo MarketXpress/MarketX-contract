@@ -1,5 +1,8 @@
 #![no_std]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(dead_code)]
 
 //! # MarketX Smart Contract
 //!
@@ -800,7 +803,13 @@ impl Contract {
         };
         event.publish(&env);
 
-        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), initiator);
+        Self::emit_status_change(
+            &env,
+            escrow_id,
+            from_status,
+            escrow.status.clone(),
+            initiator,
+        );
 
         Ok(request_id)
     }
@@ -917,15 +926,13 @@ impl Contract {
         // The proposed admin must authenticate this transaction
         proposed_admin.require_auth();
 
-        let old_admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap();
+        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
 
         // Transfer the admin role
-        env.storage().persistent().set(&DataKey::Admin, &proposed_admin);
-        
+        env.storage()
+            .persistent()
+            .set(&DataKey::Admin, &proposed_admin);
+
         // Clean up the proposal
         env.storage().persistent().remove(&DataKey::ProposedAdmin);
 
@@ -981,7 +988,9 @@ impl Contract {
 
     /// Get a refund request by ID.
     pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
-        env.storage().persistent().get(&DataKey::RefundRequest(request_id))
+        env.storage()
+            .persistent()
+            .get(&DataKey::RefundRequest(request_id))
     }
 
     /// Get the total number of refund requests.

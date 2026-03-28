@@ -9,9 +9,9 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
-    MAX_METADATA_SIZE,
+    AdminTransferredEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    StatusChangeEvent, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -498,6 +498,48 @@ impl Contract {
     // =========================
     // 🔧 ADMIN FUNCTIONS
     // =========================
+
+    /// Propose a new admin. The transfer is not complete until the new admin accepts.
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposedAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept the administrative role. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env) -> Result<(), ContractError> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposedAdmin)
+            .ok_or(ContractError::NotProposedAdmin)?;
+
+        // The proposed admin must authenticate this transaction
+        proposed_admin.require_auth();
+
+        let old_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap();
+
+        // Transfer the admin role
+        env.storage().persistent().set(&DataKey::Admin, &proposed_admin);
+        
+        // Clean up the proposal
+        env.storage().persistent().remove(&DataKey::ProposedAdmin);
+
+        // Emit the event
+        AdminTransferredEvent {
+            old_admin,
+            new_admin: proposed_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
 
     /// Get the current admin address.
     pub fn get_admin(env: Env) -> Option<Address> {

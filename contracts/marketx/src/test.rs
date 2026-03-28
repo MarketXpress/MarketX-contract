@@ -939,8 +939,7 @@ fn test_release_routes_fee_to_collector() {
     // Fund contract with 1000 tokens
     token_admin.mint(&client.address, &1000);
 
-    let escrow_id =
-        client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
     client.release_escrow(&escrow_id);
 
     // fee = 1000 * 250 / 10_000 = 25
@@ -966,8 +965,7 @@ fn test_release_zero_fee_sends_full_amount_to_seller() {
 
     token_admin.mint(&client.address, &1000);
 
-    let escrow_id =
-        client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None);
     client.release_escrow(&escrow_id);
 
     // fee = 0, seller gets everything
@@ -1017,8 +1015,7 @@ fn test_release_emits_fee_collected_event() {
 
     token_admin.mint(&client.address, &2000);
 
-    let escrow_id =
-        client.create_escrow(&buyer, &seller, &token_id.address(), &2000, &None, &None);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &2000, &None, &None);
     client.release_escrow(&escrow_id);
 
     // fee = 2000 * 500 / 10_000 = 100

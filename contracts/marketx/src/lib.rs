@@ -339,6 +339,7 @@ impl Contract {
 
         // 4. Transfer funds from buyer into the contract
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        #[allow(clippy::needless_borrows_for_generic_args)]
         token_client.transfer(
             &escrow.buyer,
             &env.current_contract_address(),
@@ -380,6 +381,7 @@ impl Contract {
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
         // 5. Transfer seller_amount to seller
+        #[allow(clippy::needless_borrows_for_generic_args)]
         token_client.transfer(
             &env.current_contract_address(),
             &escrow.seller,
@@ -394,6 +396,7 @@ impl Contract {
                 .get(&DataKey::FeeCollector)
                 .ok_or(ContractError::InvalidFeeConfig)?;
 
+            #[allow(clippy::needless_borrows_for_generic_args)]
             token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
 
             FeeCollectedEvent {

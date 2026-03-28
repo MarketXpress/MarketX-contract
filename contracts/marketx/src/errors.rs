@@ -39,4 +39,10 @@ pub enum ContractError {
 
     // Duplicates
     DuplicateEscrow = 70,
+
+    // Items
+    ItemNotFound = 80,
+    ItemAlreadyReleased = 81,
+    TooManyItems = 82,
+    ItemAmountInvalid = 83,
 }

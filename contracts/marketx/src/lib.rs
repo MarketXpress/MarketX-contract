@@ -9,9 +9,9 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus, StatusChangeEvent,
-    MAX_METADATA_SIZE,
+    DataKey, Escrow, EscrowCreatedEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -192,20 +192,52 @@ impl Contract {
     // 💰 ESCROW ACTIONS
     // =========================
 
-    /// Create a new escrow with optional metadata.
+    /// Create a new escrow with optional metadata and multiple items.
     ///
     /// # Arguments
     /// * `buyer` - The buyer's address
     /// * `seller` - The seller's address
-    /// * `token` - The token contract address
-    /// * `amount` - The escrow amount
+    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
+    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
     /// * `metadata` - Optional metadata (max 1KB)
     /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
     ///               If provided, only this address may call `resolve_dispute` for this escrow.
+    /// * `items` - Optional array of items/milestones. If provided, each item can be released
+    ///             independently using `release_item`. The sum of item amounts must equal
+    ///             the total escrow amount.
+    ///
+    /// # Native XLM Support
+    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
+    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
+    /// making it fully compatible with all escrow operations.
+    ///
+    /// # Example - Native XLM Escrow with Items
+    /// ```ignore
+    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
+    /// let amount: i128 = 100_000_000; // 10 XLM
+    /// let xlm_address = /* native XLM SAC address */;
+    ///
+    /// // Create items for a multi-product purchase
+    /// let items = vec![
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
+    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
+    /// ];
+    ///
+    /// let escrow_id = client.create_escrow(
+    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
+    /// );
+    ///
+    /// // Later, release individual items as they're delivered
+    /// client.release_item(&escrow_id, &0); // Release product 1
+    /// client.release_item(&escrow_id, &1); // Release product 2
+    /// ```
     ///
     /// # Errors
     /// * `MetadataTooLarge` - If metadata exceeds 1KB
     /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
+    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
+    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
     pub fn create_escrow(
         env: Env,
         buyer: Address,
@@ -214,6 +246,7 @@ impl Contract {
         amount: i128,
         metadata: Option<Bytes>,
         arbiter: Option<Address>,
+        items: Option<Vec<EscrowItem>>,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
@@ -229,6 +262,25 @@ impl Contract {
         // Check for duplicate escrow
         Self::check_duplicate_escrow(&env, &buyer, &seller, &metadata)?;
 
+        // Process items
+        let escrow_items = match items {
+            Some(items_vec) => {
+                // Check max items limit
+                if items_vec.len() > MAX_ITEMS_PER_ESCROW {
+                    return Err(ContractError::TooManyItems);
+                }
+
+                // Validate item amounts sum to total
+                let items_sum: i128 = items_vec.iter().map(|item| item.amount).sum();
+                if items_sum != amount {
+                    return Err(ContractError::ItemAmountInvalid);
+                }
+
+                items_vec
+            }
+            None => Vec::new(&env),
+        };
+
         let escrow_id = Self::next_escrow_id(&env)?;
 
         let escrow = Escrow {
@@ -239,6 +291,7 @@ impl Contract {
             status: EscrowStatus::Pending,
             metadata: metadata.clone(),
             arbiter: arbiter.clone(),
+            items: escrow_items,
         };
 
         env.storage()
@@ -260,17 +313,6 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFundedAmount, &(current_total + amount));
-
-        // Track escrow ID for pagination
-        let mut escrow_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&DataKey::EscrowIds)
-            .unwrap_or(Vec::new(&env));
-        escrow_ids.push_back(escrow_id);
-        env.storage()
-            .persistent()
-            .set(&DataKey::EscrowIds, &escrow_ids);
 
         // Emit event
         let event = EscrowCreatedEvent {
@@ -297,6 +339,47 @@ impl Contract {
         let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
 
         escrow.and_then(|e| e.metadata)
+    }
+
+    /// Get the items for an escrow.
+    pub fn get_escrow_items(env: Env, escrow_id: u64) -> Option<Vec<EscrowItem>> {
+        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
+
+        escrow.map(|e| e.items)
+    }
+
+    /// Get a paginated list of escrows.
+    ///
+    /// # Arguments
+    /// * `start` - The starting escrow ID (1-based)
+    /// * `limit` - Maximum number of escrows to return
+    ///
+    /// # Returns
+    /// A vector of optional escrows. Missing escrows (if any) are returned as None.
+    pub fn get_escrows(env: Env, start: u64, limit: u32) -> Vec<Option<Escrow>> {
+        let counter: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0);
+
+        let mut result = Vec::new(&env);
+
+        // Handle empty case or invalid start
+        if counter == 0 || start == 0 || start > counter {
+            return result;
+        }
+
+        // Calculate end bound (inclusive)
+        let end = (start + limit as u64 - 1).min(counter);
+
+        // Iterate through IDs and fetch escrows
+        for id in start..=end {
+            let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(id));
+            result.push_back(escrow);
+        }
+
+        result
     }
 
     // =========================
@@ -395,6 +478,93 @@ impl Contract {
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         // existing partial release logic here
+        Ok(())
+    }
+
+    /// Release a specific item from an escrow.
+    ///
+    /// This allows partial release of escrow funds as individual items are delivered.
+    /// Only the buyer can release items. Once all items are released, the escrow
+    /// status changes to Released.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow
+    /// * `item_index` - The index of the item to release (0-based)
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If the escrow doesn't exist
+    /// * `InvalidEscrowState` - If the escrow is not in Pending state
+    /// * `ItemNotFound` - If the item index is out of bounds
+    /// * `ItemAlreadyReleased` - If the item has already been released
+    pub fn release_item(env: Env, escrow_id: u64, item_index: u32) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        // 1. Load and validate the escrow exists
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // 2. Validate escrow is in Pending state
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        // 3. Enforce buyer authorization
+        escrow.buyer.require_auth();
+
+        // 4. Validate item exists
+        if item_index as u32 >= escrow.items.len() {
+            return Err(ContractError::ItemNotFound);
+        }
+
+        // 5. Get the item and check if already released
+        let mut item = escrow.items.get(item_index as u32).unwrap();
+        if item.released {
+            return Err(ContractError::ItemAlreadyReleased);
+        }
+
+        // 6. Mark item as released
+        item.released = true;
+        escrow.items.set(item_index as u32, item.clone());
+
+        // 7. Transfer the item's amount to the seller
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.seller,
+            &item.amount,
+        );
+
+        // 8. Check if all items are released
+        let all_released = escrow.items.iter().all(|i| i.released);
+
+        // 9. Emit FundsReleasedEvent for this item
+        let event = FundsReleasedEvent {
+            escrow_id,
+            amount: item.amount,
+        };
+        event.publish(&env);
+
+        // 10. If all items released, update escrow status
+        if all_released {
+            let from_status = escrow.status.clone();
+            escrow.status = EscrowStatus::Released;
+            Self::emit_status_change(
+                &env,
+                escrow_id,
+                from_status,
+                escrow.status.clone(),
+                escrow.buyer.clone(),
+            );
+        }
+
+        // 11. Save updated escrow
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
         Ok(())
     }
 

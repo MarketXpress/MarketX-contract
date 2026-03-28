@@ -3,12 +3,9 @@ extern crate std;
 
 use arbitrary::{Arbitrary, Unstructured};
 use proptest::prelude::*;
-use soroban_sdk::{testutils::Address as _, Address, Bytes, Env};
 use soroban_sdk::{
-    testutils::{storage::Persistent as _, Address as _, Events as _, MockAuth, MockAuthInvoke},
-    Address, Bytes, Env, Event, IntoVal,
-    testutils::{storage::Persistent as _, Address as _, Events as _},
-    Address, Bytes, Env, Event, Vec,
+    testutils::{storage::Persistent as _, Address as _, MockAuth, MockAuthInvoke},
+    Address, Bytes, Env, Event, IntoVal, Vec,
 };
 
 use crate::errors::ContractError;

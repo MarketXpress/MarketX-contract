@@ -851,7 +851,53 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0);
 
-    let result = client.try_resolve_dispute(&999u64, &false);
+    let result = client.try_resolve_dispute(&999u64, &0u32);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+#[test]
+fn test_buyer_can_request_refund() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let amount = 1000i128;
+    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Create escrow
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &amount, &None, &None);
+
+    // Request refund
+    let request_id = client.refund_escrow(&escrow_id, &buyer, &amount, &crate::RefundReason::ProductNotReceived, &evidence_hash);
+
+    // Verify refund request was created
+    let refund_request = client.get_refund_request(&request_id).unwrap();
+    assert_eq!(refund_request.escrow_id, escrow_id);
+    assert_eq!(refund_request.requester, buyer);
+    assert_eq!(refund_request.amount, amount);
+    assert_eq!(refund_request.reason, crate::RefundReason::ProductNotReceived);
+    assert_eq!(refund_request.status, crate::RefundStatus::Pending);
+
+    // Verify escrow status changed to Disputed
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_refund_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_refund_escrow(&999, &buyer, &1000, &crate::RefundReason::ProductNotReceived, &evidence_hash);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }
 
@@ -870,6 +916,8 @@ fn test_release_routes_fee_to_collector() {
     let token_id = env.register_stellar_asset_contract_v2(admin.clone());
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+use arbitrary::{Arbitrary, Unstructured};
+use proptest::prelude::*;
 
     env.mock_all_auths();
     // 250 bps = 2.5%
@@ -936,6 +984,71 @@ fn test_release_fee_rounding_floors() {
     // fee floors to 0, seller gets full 1
     assert_eq!(token.balance(&seller), 1);
     assert_eq!(token.balance(&fee_collector), 0);
+    let mut escrow_id: Option<u64> = None;
+
+    for action in actions {
+        match action {
+            FuzzAction::Create => {
+                if escrow_id.is_none() {
+                    let id = client.create_escrow(
+                        &buyer,
+                        &seller,
+                        &token_id.address(),
+                        &1000,
+                        &None,
+                        &Some(arbiter.clone()),
+                    );
+                    escrow_id = Some(id);
+                }
+            }
+            FuzzAction::MintBuyer => {
+                token_admin.mint(&buyer, &1000);
+            }
+            FuzzAction::Fund => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_fund_escrow(&id);
+                }
+            }
+            FuzzAction::MintContract => {
+                token_admin.mint(&client.address, &1000);
+            }
+            FuzzAction::Release => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_release_escrow(&id);
+                }
+            }
+            FuzzAction::RefundBuyer => {
+                if let Some(id) = escrow_id {
+                    let evidence_hash = Bytes::from_array(&env, &[1, 2, 3, 4]);
+                    let _ = client.try_refund_escrow(&id, &buyer, &1000, &crate::RefundReason::ProductNotReceived, &evidence_hash);
+                }
+            }
+            FuzzAction::ResolveDisputeSeller => {
+                if let Some(id) = escrow_id {
+                    let _ = client.try_resolve_dispute(&id, &0u32);
+                }
+            }
+        }
+
+        if let Some(id) = escrow_id {
+            let escrow = client.get_escrow(&id);
+
+            if let Some(escrow) = escrow {
+                assert!(escrow.amount >= 0);
+
+                match escrow.status {
+                    crate::types::EscrowStatus::Pending
+                    | crate::types::EscrowStatus::Released
+                    | crate::types::EscrowStatus::Refunded
+                    | crate::types::EscrowStatus::Disputed => {}
+                }
+
+                assert!(token.balance(&buyer) >= 0);
+                assert!(token.balance(&seller) >= 0);
+                assert!(token.balance(&client.address) >= 0);
+            }
+        }
+    }
 }
 
 #[test]

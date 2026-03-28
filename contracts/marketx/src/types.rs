@@ -32,7 +32,7 @@ pub fn native_xlm_address(env: &Env) -> Address {
 pub enum DataKey {
     Escrow(u64),
 
-    // 🔢 Escrow Counter
+    //  Escrow Counter
     EscrowCounter,
     FeeCollector,
     FeeBps,
@@ -49,7 +49,14 @@ pub enum DataKey {
     InitialValue,
     EscrowHash(BytesN<32>),
     TotalFundedAmount,
+
+    TotalRefundedAmount,
+    TotalDisputedCount,
+    TotalFeesCollected,
+    EscrowIds,
+
     TotalReleasedAmount,
+
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -189,6 +196,9 @@ pub struct RefundHistoryEntry {
     pub amount: i128,
     pub refunded_at: u64,
 }
+
+
+
 
 #[contractevent(topics = ["refund_requested"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]

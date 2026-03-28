@@ -940,6 +940,13 @@ impl Contract {
     // 🔧 ADMIN FUNCTIONS
     // =========================
 
+    /// Upgrade the contract WASM.
+    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        Ok(())
+    }
+
     /// Propose a new admin. The transfer is not complete until the new admin accepts.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;

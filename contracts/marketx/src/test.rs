@@ -1539,3 +1539,59 @@ fn test_contract_balance_invariant() {
     assert!(token.balance(&contract_id) >= expected_contract_balance);
     assert_eq!(expected_contract_balance, 0);
 }
+
+#[test]
+fn test_upgrade_auth_failure() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let contract_id = env.register_contract(None, MarketXContract);
+    let client = MarketXContractClient::new(&env, &contract_id);
+
+    client.mock_all_auths();
+    client.initialize(&admin, &collector, &250);
+
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0; 32]);
+    let result = client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "upgrade",
+                args: (&new_wasm_hash,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_upgrade(&new_wasm_hash);
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_upgrade_state_persistence() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let contract_id = env.register_contract(None, MarketXContract);
+    let client = MarketXContractClient::new(&env, &contract_id);
+    
+    client.initialize(&admin, &admin, &500);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None, &None);
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.amount, 1000);
+    
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0; 32]);
+    let _ = client.try_upgrade(&new_wasm_hash);
+    
+    let escrow_after = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow_after.amount, 1000);
+}

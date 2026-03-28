@@ -911,3 +911,59 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
     let result = client.try_resolve_dispute(&999u64, &0u32);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
 }
+
+#[test]
+fn test_buyer_can_request_refund() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let amount = 1000i128;
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Create escrow
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &amount, &None, &None);
+
+    // Request refund
+    let request_id = client.refund_escrow(&escrow_id, &crate::RefundReason::ProductNotReceived);
+
+    // Verify refund request was created
+    let refund_request = client.get_refund_request(&request_id).unwrap();
+    assert_eq!(refund_request.escrow_id, escrow_id);
+    assert_eq!(refund_request.requester, buyer);
+    assert_eq!(refund_request.amount, amount);
+    assert_eq!(refund_request.reason, crate::RefundReason::ProductNotReceived);
+    assert_eq!(refund_request.status, crate::RefundStatus::Pending);
+
+    // Verify escrow status changed to Disputed
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::EscrowStatus::Disputed);
+}
+
+#[test]
+fn test_refund_fails_if_not_pending() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    // Try to request refund on non-existent escrow (will fail with EscrowNotFound)
+    let result = client.try_refund_escrow(&999, &crate::RefundReason::ProductNotReceived);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}
+
+#[test]
+fn test_refund_fails_for_nonexistent_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let result = client.try_refund_escrow(&999, &crate::RefundReason::ProductNotReceived);
+    assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
+}

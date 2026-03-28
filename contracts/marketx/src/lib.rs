@@ -398,15 +398,79 @@ impl Contract {
         Ok(())
     }
 
+    /// Request a refund for an escrow.
+    /// 
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to refund
+    /// * `reason` - The reason for the refund request
+    /// 
+    /// # Requirements
+    /// * Initiator must be the buyer
+    /// * Escrow must be in Pending state
+    /// * Creates a RefundRequest tracking object
+    /// * Changes escrow status to Disputed
     pub fn refund_escrow(
         env: Env,
-        _escrow_id: u64,
-        initiator: Address,
-    ) -> Result<(), ContractError> {
+        escrow_id: u64,
+        reason: RefundReason,
+    ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
-        initiator.require_auth();
-        // existing refund logic here
-        Ok(())
+
+        // 1. Load and validate the escrow exists
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // 2. Validate escrow is in Pending state
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        // 3. Enforce buyer authorization - only the buyer can request a refund
+        escrow.buyer.require_auth();
+        let from_status = escrow.status.clone();
+
+        // 4. Generate next refund request ID
+        let refund_count: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundCount)
+            .unwrap_or(0);
+        let request_id = refund_count + 1;
+
+        // 5. Create RefundRequest tracking object
+        let refund_request = RefundRequest {
+            request_id,
+            escrow_id,
+            requester: escrow.buyer.clone(),
+            amount: escrow.amount,
+            reason,
+            status: RefundStatus::Pending,
+            created_at: env.ledger().timestamp(),
+        };
+
+        // 6. Store the refund request
+        env.storage()
+            .persistent()
+            .set(&DataKey::RefundRequest(request_id), &refund_request);
+
+        // 7. Update refund count
+        env.storage()
+            .persistent()
+            .set(&DataKey::RefundCount, &request_id);
+
+        // 8. Change escrow status to Disputed
+        escrow.status = EscrowStatus::Disputed;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        // 9. Emit status change event
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), escrow.buyer.clone());
+
+        Ok(request_id)
     }
 
     pub fn bump_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
@@ -540,6 +604,19 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::FeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Get a refund request by ID.
+    pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
+        env.storage().persistent().get(&DataKey::RefundRequest(request_id))
+    }
+
+    /// Get the total number of refund requests.
+    pub fn get_refund_count(env: Env) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RefundCount)
             .unwrap_or(0)
     }
 }

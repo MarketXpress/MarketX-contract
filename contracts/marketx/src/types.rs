@@ -1,4 +1,7 @@
-use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Vec};
+
+#[cfg(test)]
+use soroban_sdk::Env;
 
 /// Returns the contract address for the native XLM token (Stellar Asset Contract).
 ///
@@ -186,7 +189,7 @@ pub struct RefundHistoryEntry {
     pub refunded_at: u64,
 }
 
-#[contracttype]
+#[contractevent(topics = ["refund_requested"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundRequestedEvent {
     pub request_id: u64,
@@ -195,7 +198,7 @@ pub struct RefundRequestedEvent {
     pub evidence_hash: Option<Bytes>,
 }
 
-#[contracttype]
+#[contractevent(topics = ["counter_evidence"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CounterEvidenceSubmittedEvent {
     pub request_id: u64,

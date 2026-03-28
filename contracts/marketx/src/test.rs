@@ -1,8 +1,7 @@
 #![cfg(test)]
 extern crate std;
 
-use arbitrary::{Arbitrary, Unstructured};
-use proptest::prelude::*;
+use soroban_sdk::testutils::Events;
 use soroban_sdk::{
     testutils::{storage::Persistent as _, Address as _, MockAuth, MockAuthInvoke},
     Address, Bytes, Env, Event, IntoVal, Vec,
@@ -796,7 +795,7 @@ fn test_arbiter_can_resolve_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &true);
+    client.resolve_dispute(&escrow_id, &1);
 
     assert_eq!(token.balance(&seller), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -882,7 +881,7 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &false);
+    client.resolve_dispute(&escrow_id, &0);
 
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -1005,7 +1004,7 @@ fn test_resolve_dispute_fails_if_not_disputed() {
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &Some(arbiter), &None);
 
-    let result = client.try_resolve_dispute(&escrow_id, &false);
+    let result = client.try_resolve_dispute(&escrow_id, &0);
     assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
 }
 

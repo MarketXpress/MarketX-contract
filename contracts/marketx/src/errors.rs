@@ -6,6 +6,7 @@ pub enum ContractError {
     // Auth
     NotAdmin = 1,
     Unauthorized = 2,
+    NotProposedAdmin = 3,
 
     // Escrow
     EscrowNotFound = 10,

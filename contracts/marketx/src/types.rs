@@ -18,6 +18,7 @@ pub enum DataKey {
     // Security
     ReentrancyLock,
     Admin,
+    ProposedAdmin,
     Paused,
 
     // Refunds
@@ -103,6 +104,13 @@ pub struct FeeChangedEvent {
     pub old_fee_bps: u32,
     pub new_fee_bps: u32,
     pub actor: Address,
+}
+
+#[contractevent(topics = ["admin_transferred"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferredEvent {
+    pub old_admin: Address,
+    pub new_admin: Address,
 }
 
 #[contracttype]

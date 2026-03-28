@@ -73,6 +73,120 @@ fn non_admin_cannot_pause() {
 }
 
 #[test]
+fn admin_rotation_flow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250);
+
+    // Transfer and accept admin
+    client.transfer_admin(&new_admin);
+    client.accept_admin();
+
+    // Verify new admin is active
+    assert_eq!(client.get_admin().unwrap(), new_admin);
+}
+
+#[test]
+fn accept_admin_fails_if_none_proposed() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250);
+
+    // Attempt to accept without any proposal
+    let result = client.try_accept_admin();
+    assert_eq!(result, Err(Ok(ContractError::NotProposedAdmin)));
+}
+
+#[test]
+#[should_panic]
+fn transfer_admin_fails_if_not_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let not_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    // Attempt to transfer as not_admin. It should trap since admin.require_auth() fails.
+    client
+        .mock_auths(&[MockAuth {
+            address: &not_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .transfer_admin(&new_admin);
+}
+
+#[test]
+#[should_panic]
+fn accept_admin_fails_if_unauthorized() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let not_proposed = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &collector, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &collector, &250);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "transfer_admin",
+                args: (&new_admin,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .transfer_admin(&new_admin);
+
+    // Attempt to accept with the wrong person mocked
+    client
+        .mock_auths(&[MockAuth {
+            address: &not_proposed,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .accept_admin();
+}
+
+#[test]
 fn escrow_actions_blocked_when_paused() {
     let (env, client) = setup();
     let admin = Address::generate(&env);

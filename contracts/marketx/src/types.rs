@@ -49,6 +49,7 @@ pub enum DataKey {
     InitialValue,
     EscrowHash(BytesN<32>),
     TotalFundedAmount,
+    TotalReleasedAmount,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;

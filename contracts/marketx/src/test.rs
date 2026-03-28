@@ -1481,3 +1481,61 @@ fn test_escrow_without_items_uses_full_release() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
 }
+
+#[test]
+fn test_contract_balance_invariant() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let arbiter = Address::generate(&env);
+    
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    let contract_id = env.register_contract(None, MarketXContract);
+    let client = MarketXContractClient::new(&env, &contract_id);
+    
+    // Fee collector is admin, fee is 5%
+    client.initialize(&admin, &admin, &500);
+
+    token_admin.mint(&buyer, &10000);
+
+    let mut expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
+    assert!(token.balance(&contract_id) >= expected_contract_balance);
+    assert_eq!(expected_contract_balance, 0);
+
+    let escrow_id1 = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None, &None);
+    client.fund_escrow(&escrow_id1);
+
+    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
+    assert_eq!(token.balance(&contract_id), expected_contract_balance);
+    assert_eq!(expected_contract_balance, 1000);
+
+    let escrow_id2 = client.create_escrow(&buyer, &seller, &token_id.address(), &2000, &None, &Some(arbiter.clone()), &None);
+    client.fund_escrow(&escrow_id2);
+
+    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
+    assert_eq!(token.balance(&contract_id), expected_contract_balance);
+    assert_eq!(expected_contract_balance, 3000);
+
+    client.release_escrow(&escrow_id1);
+
+    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
+    assert!(token.balance(&contract_id) >= expected_contract_balance);
+    assert_eq!(expected_contract_balance, 2000);
+
+    let reason = crate::types::RefundReason::ItemNotDelivered;
+    let evidence_hash = Bytes::from_slice(&env, b"evidence_hash_1234567890123");
+    client.refund_escrow(&escrow_id2, &buyer, &2000, &reason, &evidence_hash);
+    
+    // Resolve dispute with refund to buyer (1)
+    client.resolve_dispute(&escrow_id2, &1);
+
+    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
+    assert!(token.balance(&contract_id) >= expected_contract_balance);
+    assert_eq!(expected_contract_balance, 0);
+}

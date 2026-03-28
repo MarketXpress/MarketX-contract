@@ -95,15 +95,10 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
+    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
+    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
     StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
-    StatusChangeEvent, MAX_METADATA_SIZE,
-    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowStatus,
-    FeeChangedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, 
-    RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -901,6 +896,52 @@ impl Contract {
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        Ok(())
+    }
+
+    // =========================
+    // 🔧 ADMIN FUNCTIONS
+    // =========================
+
+    /// Propose a new admin. The transfer is not complete until the new admin accepts.
+    pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ProposedAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Accept the administrative role. Must be called by the proposed admin.
+    pub fn accept_admin(env: Env) -> Result<(), ContractError> {
+        let proposed_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ProposedAdmin)
+            .ok_or(ContractError::NotProposedAdmin)?;
+
+        // The proposed admin must authenticate this transaction
+        proposed_admin.require_auth();
+
+        let old_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap();
+
+        // Transfer the admin role
+        env.storage().persistent().set(&DataKey::Admin, &proposed_admin);
+        
+        // Clean up the proposal
+        env.storage().persistent().remove(&DataKey::ProposedAdmin);
+
+        // Emit the event
+        AdminTransferredEvent {
+            old_admin,
+            new_admin: proposed_admin,
+        }
+        .publish(&env);
 
         Ok(())
     }

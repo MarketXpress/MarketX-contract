@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
 mod types;
@@ -9,15 +9,23 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    DataKey, Escrow, EscrowCreatedEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    DataKey, Escrow, EscrowCreatedEvent, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundStatus,
-    StatusChangeEvent, MAX_METADATA_SIZE,
-    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowStatus,
-    FeeChangedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, 
-    RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_METADATA_SIZE,
+    DataKey,
+    Escrow,
+    EscrowCreatedEvent,
+    EscrowItem,
+    EscrowStatus,
+    FeeChangedEvent,
+    FeeCollectedEvent,
+    FundsReleasedEvent,
+    RefundHistoryEntry,
+    RefundReason,
+    RefundRequest,
+    RefundRequestedEvent,
+    RefundStatus,
+    StatusChangeEvent,
+    CounterEvidenceSubmittedEvent,
+    MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE,
 };
 
 #[cfg(test)]
@@ -38,19 +46,30 @@ impl Contract {
         Ok(admin)
     }
 
-    fn assert_not_paused(env: &Env) -> Result<(), ContractError> {
-        let paused: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Paused)
-            .unwrap_or(false);
+  fn assert_not_paused(env: &Env) -> Result<(), ContractError> {
+    let paused: bool = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Paused)
+        .unwrap_or(false);
 
-        if paused {
-            Err(ContractError::ContractPaused)
-        } else {
-            Ok(())
-        }
+    if paused {
+        return Err(ContractError::ContractPaused);
     }
+
+    Ok(())
+}
+
+    fn add_i128(env: &Env, key: DataKey, value: i128) {
+    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current + value));
+}
+
+fn add_u32(env: &Env, key: DataKey) {
+    let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+    env.storage().persistent().set(&key, &(current + 1));
+}
+    
 
     fn next_escrow_id(env: &Env) -> Result<u64, ContractError> {
         let current: u64 = env
@@ -166,6 +185,9 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFundedAmount, &0i128);
+            env.storage().persistent().set(&DataKey::TotalRefundedAmount, &0i128);
+env.storage().persistent().set(&DataKey::TotalDisputedCount, &0u32);
+env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
     }
 
     pub fn pause(env: Env) -> Result<(), ContractError> {
@@ -482,6 +504,8 @@ impl Contract {
             #[allow(clippy::needless_borrows_for_generic_args)]
             token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
 
+            Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
+
             FeeCollectedEvent {
                 escrow_id,
                 fee_collector,
@@ -573,10 +597,11 @@ impl Contract {
         let all_released = escrow.items.iter().all(|i| i.released);
 
         // 9. Emit FundsReleasedEvent for this item
-        let event = FundsReleasedEvent {
-            escrow_id,
-            amount: item.amount,
-        };
+       let event = FundsReleasedEvent {
+    escrow_id,
+    amount: item.amount,
+    fee: 0,
+};
         event.publish(&env);
 
         // 10. If all items released, update escrow status
@@ -659,6 +684,7 @@ impl Contract {
 
         let from_status = escrow.status.clone();
         escrow.status = EscrowStatus::Disputed;
+        Self::add_u32(&env, DataKey::TotalDisputedCount);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -735,6 +761,8 @@ impl Contract {
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
+        
+
         if resolution == 0 {
             // Release to seller
             token_client.transfer(
@@ -750,6 +778,7 @@ impl Contract {
                 &escrow.buyer,
                 &escrow.amount,
             );
+            Self::add_i128(&env, DataKey::TotalRefundedAmount, escrow.amount);
             escrow.status = EscrowStatus::Refunded;
         }
 

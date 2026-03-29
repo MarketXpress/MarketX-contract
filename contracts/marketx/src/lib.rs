@@ -567,6 +567,13 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .unwrap_or(0)
     }
 
+    pub fn get_total_refunded_amount(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalRefundedAmount)
+            .unwrap_or(0)
+    }
+
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
@@ -955,6 +962,16 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Released;
+            
+            let current_released_total: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalReleasedAmount)
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
+
         } else if resolution == 1 {
             // Refund to buyer
             token_client.transfer(
@@ -968,20 +985,27 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             return Err(ContractError::InvalidEscrowState);
         }
 
+        // Update associated refund requests if they exist
+        let escrow_refunds: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowRefunds(escrow_id))
+            .unwrap_or(Vec::new(&env));
+        
+        for req_id in escrow_refunds.iter() {
+            if let Some(mut req) = env.storage().persistent().get::<DataKey, RefundRequest>(&DataKey::RefundRequest(req_id)) {
+                if req.status == RefundStatus::Pending {
+                    req.status = if resolution == 1 { RefundStatus::Approved } else { RefundStatus::Rejected };
+                    env.storage().persistent().set(&DataKey::RefundRequest(req_id), &req);
+                }
+            }
+        }
+
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
-
-        let current_released_total: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TotalReleasedAmount)
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
 
         Ok(())
     }

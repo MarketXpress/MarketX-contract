@@ -796,7 +796,7 @@ fn test_arbiter_can_resolve_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &1);
+    client.resolve_dispute(&escrow_id, &0u32);
 
     assert_eq!(token.balance(&seller), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -882,7 +882,7 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
 
-    client.resolve_dispute(&escrow_id, &0);
+    client.resolve_dispute(&escrow_id, &1u32);
 
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -1535,8 +1535,8 @@ fn test_contract_balance_invariant() {
     // Resolve dispute with refund to buyer (1)
     client.resolve_dispute(&escrow_id2, &1);
 
-    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount();
-    assert!(token.balance(&contract_id) >= expected_contract_balance);
+    expected_contract_balance = client.get_total_funded_amount() - client.get_total_released_amount() - client.get_total_refunded_amount();
+    assert_eq!(token.balance(&contract_id), expected_contract_balance);
     assert_eq!(expected_contract_balance, 0);
 }
 

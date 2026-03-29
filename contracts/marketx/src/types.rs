@@ -86,6 +86,8 @@ pub struct Escrow {
     pub status: EscrowStatus,
     pub metadata: Option<Bytes>,
     pub arbiter: Option<Address>,
+    /// Party that proposed mutual cancellation, if any.
+    pub cancellation_proposer: Option<Address>,
     /// Individual items/milestones within this escrow
     /// If empty, the entire escrow is treated as a single item
     pub items: Vec<EscrowItem>,

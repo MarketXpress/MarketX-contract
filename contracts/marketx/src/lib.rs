@@ -100,10 +100,12 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-
+    AdminTransferredEvent,
+    CounterEvidenceSubmittedEvent,
     DataKey,
     Escrow,
     EscrowCreatedEvent,
+    EscrowExpiredEvent,
     EscrowItem,
     EscrowStatus,
     FeeChangedEvent,
@@ -115,15 +117,9 @@ pub use types::{
     RefundRequestedEvent,
     RefundStatus,
     StatusChangeEvent,
-    CounterEvidenceSubmittedEvent,
     MAX_ITEMS_PER_ESCROW,
     MAX_METADATA_SIZE,
-
-    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
-    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-
+    UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -465,6 +461,7 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             metadata: metadata.clone(),
             arbiter: arbiter.clone(),
             items: escrow_items,
+            created_at: env.ledger().sequence(),
         };
 
         env.storage()
@@ -765,20 +762,11 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
         let all_released = escrow.items.iter().all(|i| i.released);
 
         // 9. Emit FundsReleasedEvent for this item
-
-       let event = FundsReleasedEvent {
-    escrow_id,
-    amount: item.amount,
-    fee: 0,
-};
-
-        let event = FundsReleasedEvent {
+        FundsReleasedEvent {
             escrow_id,
             amount: item.amount,
             fee: 0,
-        };
-
-        event.publish(&env);
+        }.publish(&env);
 
         // 10. If all items released, update escrow status
         if all_released {
@@ -917,6 +905,63 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
                 .persistent()
                 .extend_ttl(&hash_key, max_ttl, max_ttl);
         }
+
+        Ok(())
+    }
+
+    /// Cancel an escrow that was never funded after the expiry window has elapsed.
+    ///
+    /// Anyone may call this once `UNFUNDED_EXPIRY_LEDGERS` ledgers have passed
+    /// since the escrow was created without it being funded. The escrow record
+    /// and its duplicate-prevention hash are both removed from storage.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to cancel
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If the escrow doesn't exist
+    /// * `EscrowAlreadyFunded` - If the escrow is not in Pending state (i.e. it was funded)
+    /// * `EscrowNotExpired` - If the expiry window has not yet elapsed
+    pub fn cancel_unfunded(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // Only Pending escrows can be cancelled as unfunded.
+        // Any other status means the escrow was already funded/acted upon.
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::EscrowAlreadyFunded);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        let expiry_ledger = escrow
+            .created_at
+            .checked_add(UNFUNDED_EXPIRY_LEDGERS)
+            .unwrap_or(u32::MAX);
+
+        if current_ledger < expiry_ledger {
+            return Err(ContractError::EscrowNotExpired);
+        }
+
+        // Remove the escrow record
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Escrow(escrow_id));
+
+        // Remove the duplicate-prevention hash so the same escrow can be recreated
+        let hash = Self::generate_escrow_hash(&env, &escrow.buyer, &escrow.seller, &escrow.metadata);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::EscrowHash(hash));
+
+        EscrowExpiredEvent {
+            escrow_id,
+            buyer: escrow.buyer,
+            seller: escrow.seller,
+        }
+        .publish(&env);
 
         Ok(())
     }

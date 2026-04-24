@@ -56,7 +56,6 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
-
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -213,9 +212,6 @@ pub struct RefundHistoryEntry {
     pub amount: i128,
     pub refunded_at: u64,
 }
-
-
-
 
 #[contractevent(topics = ["refund_requested"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]

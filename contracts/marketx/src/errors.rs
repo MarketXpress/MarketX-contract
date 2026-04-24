@@ -11,7 +11,6 @@ pub enum ContractError {
     // =========================
     // AUTHENTICATION ERRORS (1-9)
     // =========================
-
     /// Caller is not the contract admin.
     ///
     /// This error is returned when a function requires admin privileges
@@ -32,7 +31,6 @@ pub enum ContractError {
     // =========================
     // ESCROW ERRORS (10-19)
     // =========================
-
     /// The specified escrow does not exist.
     ///
     /// This error is returned when attempting to operate on an escrow
@@ -62,7 +60,6 @@ pub enum ContractError {
     // =========================
     // SECURITY ERRORS (30-39)
     // =========================
-
     /// Contract is currently paused.
     ///
     /// This error is returned when attempting to perform operations
@@ -74,7 +71,6 @@ pub enum ContractError {
     // =========================
     // COUNTER ERRORS (40-49)
     // =========================
-
     /// Escrow ID would overflow u64.
     ///
     /// This error is returned when the contract has already created
@@ -86,7 +82,6 @@ pub enum ContractError {
     // =========================
     // FEE ERRORS (50-59)
     // =========================
-
     /// Fee configuration is invalid.
     ///
     /// This error is returned when the fee configuration is malformed
@@ -98,7 +93,6 @@ pub enum ContractError {
     // =========================
     // METADATA ERRORS (60-69)
     // =========================
-
     /// Metadata exceeds maximum allowed size.
     ///
     /// This error is returned when the provided metadata is larger
@@ -110,7 +104,6 @@ pub enum ContractError {
     // =========================
     // DUPLICATION ERRORS (70-79)
     // =========================
-
     /// Duplicate escrow detected.
     ///
     /// This error is returned when attempting to create an escrow with
@@ -122,7 +115,6 @@ pub enum ContractError {
     // =========================
     // ITEM ERRORS (80-89)
     // =========================
-
     /// Item not found in escrow.
     ///
     /// This error is returned when attempting to access an item
@@ -158,7 +150,6 @@ pub enum ContractError {
     // =========================
     // EXPIRY ERRORS (90-99)
     // =========================
-
     /// Escrow has not yet passed the unfunded expiry window.
     ///
     /// This error is returned when `cancel_unfunded` is called before

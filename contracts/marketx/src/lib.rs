@@ -1,5 +1,4 @@
 #![no_std]
-
 #![allow(missing_docs)]
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::unnecessary_cast)]
@@ -90,7 +89,6 @@
 //! - Reentrancy protection on critical paths
 //! - Comprehensive input validation
 
-
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
@@ -100,25 +98,10 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent,
-    CounterEvidenceSubmittedEvent,
-    DataKey,
-    Escrow,
-    EscrowCreatedEvent,
-    EscrowExpiredEvent,
-    EscrowItem,
-    EscrowStatus,
-    FeeChangedEvent,
-    FeeCollectedEvent,
-    FundsReleasedEvent,
-    RefundHistoryEntry,
-    RefundReason,
-    RefundRequest,
-    RefundRequestedEvent,
-    RefundStatus,
-    StatusChangeEvent,
-    MAX_ITEMS_PER_ESCROW,
-    MAX_METADATA_SIZE,
+    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
+    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
 };
 
@@ -144,30 +127,29 @@ impl Contract {
         Ok(admin)
     }
 
-  fn assert_not_paused(env: &Env) -> Result<(), ContractError> {
-    let paused: bool = env
-        .storage()
-        .persistent()
-        .get(&DataKey::Paused)
-        .unwrap_or(false);
+    fn assert_not_paused(env: &Env) -> Result<(), ContractError> {
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Paused)
+            .unwrap_or(false);
 
-    if paused {
-        return Err(ContractError::ContractPaused);
+        if paused {
+            return Err(ContractError::ContractPaused);
+        }
+
+        Ok(())
     }
 
-    Ok(())
-}
-
     fn add_i128(env: &Env, key: DataKey, value: i128) {
-    let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-    env.storage().persistent().set(&key, &(current + value));
-}
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + value));
+    }
 
-fn add_u32(env: &Env, key: DataKey) {
-    let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
-    env.storage().persistent().set(&key, &(current + 1));
-}
-    
+    fn add_u32(env: &Env, key: DataKey) {
+        let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + 1));
+    }
 
     fn next_escrow_id(env: &Env) -> Result<u64, ContractError> {
         let current: u64 = env
@@ -299,9 +281,15 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFundedAmount, &0i128);
-            env.storage().persistent().set(&DataKey::TotalRefundedAmount, &0i128);
-env.storage().persistent().set(&DataKey::TotalDisputedCount, &0u32);
-env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalRefundedAmount, &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalDisputedCount, &0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalFeesCollected, &0i128);
     }
 
     /// Pause the contract, disabling all critical operations.
@@ -603,9 +591,10 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .persistent()
             .get(&DataKey::TotalFundedAmount)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalFundedAmount, &(current_total + escrow.amount));
+        env.storage().persistent().set(
+            &DataKey::TotalFundedAmount,
+            &(current_total + escrow.amount),
+        );
 
         Ok(())
     }
@@ -691,9 +680,10 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .persistent()
             .get(&DataKey::TotalReleasedAmount)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
+        env.storage().persistent().set(
+            &DataKey::TotalReleasedAmount,
+            &(current_released_total + escrow.amount),
+        );
 
         Ok(())
     }
@@ -766,7 +756,8 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             escrow_id,
             amount: item.amount,
             fee: 0,
-        }.publish(&env);
+        }
+        .publish(&env);
 
         // 10. If all items released, update escrow status
         if all_released {
@@ -786,9 +777,10 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .persistent()
             .get(&DataKey::TotalReleasedAmount)
             .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&DataKey::TotalReleasedAmount, &(current_released_total + item.amount));
+        env.storage().persistent().set(
+            &DataKey::TotalReleasedAmount,
+            &(current_released_total + item.amount),
+        );
 
         // 11. Save updated escrow
         env.storage()
@@ -936,10 +928,7 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
         }
 
         let current_ledger = env.ledger().sequence();
-        let expiry_ledger = escrow
-            .created_at
-            .checked_add(UNFUNDED_EXPIRY_LEDGERS)
-            .unwrap_or(u32::MAX);
+        let expiry_ledger = escrow.created_at.saturating_add(UNFUNDED_EXPIRY_LEDGERS);
 
         if current_ledger < expiry_ledger {
             return Err(ContractError::EscrowNotExpired);
@@ -951,7 +940,8 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .remove(&DataKey::Escrow(escrow_id));
 
         // Remove the duplicate-prevention hash so the same escrow can be recreated
-        let hash = Self::generate_escrow_hash(&env, &escrow.buyer, &escrow.seller, &escrow.metadata);
+        let hash =
+            Self::generate_escrow_hash(&env, &escrow.buyer, &escrow.seller, &escrow.metadata);
         env.storage()
             .persistent()
             .remove(&DataKey::EscrowHash(hash));
@@ -997,8 +987,6 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
-        
-
         if resolution == 0 {
             // Release to seller
             token_client.transfer(
@@ -1007,16 +995,16 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
                 &escrow.amount,
             );
             escrow.status = EscrowStatus::Released;
-            
+
             let current_released_total: i128 = env
                 .storage()
                 .persistent()
                 .get(&DataKey::TotalReleasedAmount)
                 .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&DataKey::TotalReleasedAmount, &(current_released_total + escrow.amount));
-
+            env.storage().persistent().set(
+                &DataKey::TotalReleasedAmount,
+                &(current_released_total + escrow.amount),
+            );
         } else if resolution == 1 {
             // Refund to buyer
             token_client.transfer(
@@ -1036,12 +1024,22 @@ env.storage().persistent().set(&DataKey::TotalFeesCollected, &0i128);
             .persistent()
             .get(&DataKey::EscrowRefunds(escrow_id))
             .unwrap_or(Vec::new(&env));
-        
+
         for req_id in escrow_refunds.iter() {
-            if let Some(mut req) = env.storage().persistent().get::<DataKey, RefundRequest>(&DataKey::RefundRequest(req_id)) {
+            if let Some(mut req) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, RefundRequest>(&DataKey::RefundRequest(req_id))
+            {
                 if req.status == RefundStatus::Pending {
-                    req.status = if resolution == 1 { RefundStatus::Approved } else { RefundStatus::Rejected };
-                    env.storage().persistent().set(&DataKey::RefundRequest(req_id), &req);
+                    req.status = if resolution == 1 {
+                        RefundStatus::Approved
+                    } else {
+                        RefundStatus::Rejected
+                    };
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::RefundRequest(req_id), &req);
                 }
             }
         }

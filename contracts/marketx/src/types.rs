@@ -143,6 +143,14 @@ pub struct StatusChangeEvent {
     pub actor: Address,
 }
 
+#[contractevent(topics = ["cancellation_proposed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CancellationProposedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub actor: Address,
+}
+
 #[contractevent(topics = ["fee_changed"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeChangedEvent {

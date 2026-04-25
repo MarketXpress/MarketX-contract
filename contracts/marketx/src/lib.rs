@@ -244,6 +244,33 @@ impl Contract {
         }
         .publish(env);
     }
+
+    fn is_escrow_party(escrow: &Escrow, actor: &Address) -> bool {
+        *actor == escrow.buyer || *actor == escrow.seller
+    }
+
+    fn has_released_items(escrow: &Escrow) -> bool {
+        for item in escrow.items.iter() {
+            if item.released {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn refund_buyer(env: &Env, escrow: &mut Escrow) {
+        let token_client = soroban_sdk::token::Client::new(env, &escrow.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.buyer,
+            &escrow.amount,
+        );
+
+        Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
+        escrow.status = EscrowStatus::Refunded;
+        escrow.cancellation_proposer = None;
+    }
 }
 
 #[contractimpl]
@@ -448,6 +475,7 @@ impl Contract {
             status: EscrowStatus::Pending,
             metadata: metadata.clone(),
             arbiter: arbiter.clone(),
+            cancellation_proposer: None,
             items: escrow_items,
             created_at: env.ledger().sequence(),
         };
@@ -662,6 +690,7 @@ impl Contract {
         // 7. Update escrow status to Released
         // 5. Update escrow status to Released
         escrow.status = EscrowStatus::Released;
+        escrow.cancellation_proposer = None;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
@@ -790,6 +819,85 @@ impl Contract {
         Ok(())
     }
 
+    pub fn propose_cancellation(
+        env: Env,
+        escrow_id: u64,
+        actor: Address,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        actor.require_auth();
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if !Self::is_escrow_party(&escrow, &actor) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        if escrow.status != EscrowStatus::Pending || Self::has_released_items(&escrow) {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        if let Some(existing) = &escrow.cancellation_proposer {
+            if *existing == actor {
+                return Ok(());
+            }
+
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        escrow.cancellation_proposer = Some(actor);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        Ok(())
+    }
+
+    pub fn accept_cancellation(
+        env: Env,
+        escrow_id: u64,
+        actor: Address,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        actor.require_auth();
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if !Self::is_escrow_party(&escrow, &actor) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        if escrow.status != EscrowStatus::Pending || Self::has_released_items(&escrow) {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let proposer = escrow
+            .cancellation_proposer
+            .clone()
+            .ok_or(ContractError::InvalidEscrowState)?;
+
+        if proposer == actor {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let from_status = escrow.status.clone();
+        Self::refund_buyer(&env, &mut escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        Ok(())
+    }
+
     pub fn refund_escrow(
         env: Env,
         escrow_id: u64,
@@ -849,6 +957,7 @@ impl Contract {
 
         let from_status = escrow.status.clone();
         escrow.status = EscrowStatus::Disputed;
+        escrow.cancellation_proposer = None;
         Self::add_u32(&env, DataKey::TotalDisputedCount);
         env.storage()
             .persistent()
@@ -989,6 +1098,7 @@ impl Contract {
 
         if resolution == 0 {
             // Release to seller
+            let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
             token_client.transfer(
                 &env.current_contract_address(),
                 &escrow.seller,
@@ -996,6 +1106,8 @@ impl Contract {
             );
             escrow.status = EscrowStatus::Released;
 
+            escrow.cancellation_proposer = None;
+            
             let current_released_total: i128 = env
                 .storage()
                 .persistent()
@@ -1007,13 +1119,7 @@ impl Contract {
             );
         } else if resolution == 1 {
             // Refund to buyer
-            token_client.transfer(
-                &env.current_contract_address(),
-                &escrow.buyer,
-                &escrow.amount,
-            );
-            Self::add_i128(&env, DataKey::TotalRefundedAmount, escrow.amount);
-            escrow.status = EscrowStatus::Refunded;
+            Self::refund_buyer(&env, &mut escrow);
         } else {
             return Err(ContractError::InvalidEscrowState);
         }

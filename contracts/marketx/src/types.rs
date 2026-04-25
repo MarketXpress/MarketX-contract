@@ -56,7 +56,6 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
-
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -91,6 +90,23 @@ pub struct Escrow {
     /// Individual items/milestones within this escrow
     /// If empty, the entire escrow is treated as a single item
     pub items: Vec<EscrowItem>,
+    /// Ledger sequence number at which this escrow was created.
+    /// Used to enforce the unfunded expiry window.
+    pub created_at: u32,
+}
+
+/// Number of ledgers after creation within which an escrow must be funded.
+/// After this window, anyone may call `cancel_unfunded` to remove it.
+/// ~7 days at ~5s per ledger: 7 * 24 * 3600 / 5 = 120_960 ledgers.
+pub const UNFUNDED_EXPIRY_LEDGERS: u32 = 120_960;
+
+#[contractevent(topics = ["escrow_expired"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowExpiredEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub seller: Address,
 }
 
 #[contracttype]
@@ -198,9 +214,6 @@ pub struct RefundHistoryEntry {
     pub amount: i128,
     pub refunded_at: u64,
 }
-
-
-
 
 #[contractevent(topics = ["refund_requested"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]

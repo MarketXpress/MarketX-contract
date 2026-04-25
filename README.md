@@ -305,6 +305,7 @@ The contract now emits Soroban `#[contractevent]` events using compact `vec` pay
 | `FundsReleasedEvent` | `("funds_released", escrow_id)` | `[amount]` | `release_escrow` |
 | `StatusChangeEvent` | `("status_change", escrow_id)` | `[from_status, to_status, actor]` | Every implemented escrow status transition |
 | `FeeChangedEvent` | `("fee_changed")` | `[old_fee_bps, new_fee_bps, actor]` | `set_fee_percentage` |
+| `CancellationProposedEvent` | `("cancellation_proposed", escrow_id)` | `[actor]` | `propose_cancellation` |
 
 `StatusChangeEvent` is the canonical lifecycle stream. Every implemented escrow status mutation now emits it, including dispute resolution.
 

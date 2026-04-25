@@ -715,6 +715,95 @@ fn fund_fails_if_buyer_has_insufficient_balance() {
     assert!(result.is_err());
 }
 
+#[test]
+fn seller_can_accept_buyer_cancellation_and_refund_immediately() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    token_admin.mint(&buyer, &1000);
+    let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+
+    client.propose_cancellation(&escrow_id, &buyer);
+    client.accept_cancellation(&escrow_id, &seller);
+
+    assert_eq!(token.balance(&buyer), 1000);
+    assert_eq!(token.balance(&client.address), 0);
+    assert_eq!(client.get_total_refunded_amount(), 1000);
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+    assert_eq!(escrow.cancellation_proposer, None);
+}
+
+#[test]
+fn accept_cancellation_fails_without_prior_proposal() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
+
+    let result = client.try_accept_cancellation(&escrow_id, &seller);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
+fn cancellation_fails_after_partial_item_release() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let mut items = Vec::new(&env);
+    items.push_back(EscrowItem {
+        amount: 400,
+        released: false,
+        description: None,
+    });
+    items.push_back(EscrowItem {
+        amount: 600,
+        released: false,
+        description: None,
+    });
+
+    token_admin.mint(&client.address, &1000);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &Some(items),
+    );
+
+    client.release_item(&escrow_id, &0u32);
+
+    let result = client.try_propose_cancellation(&escrow_id, &buyer);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
 // =========================
 // ARBITER TESTS
 // =========================

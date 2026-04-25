@@ -273,6 +273,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -372,6 +378,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -477,6 +489,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -574,6 +592,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -676,6 +700,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {

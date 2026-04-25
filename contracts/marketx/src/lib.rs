@@ -101,12 +101,8 @@ pub use types::{
     AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
     EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
     RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    CancellationProposedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    StatusChangeEvent, CancellationProposedEvent, EscrowExpiredEvent, MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -275,6 +271,37 @@ impl Contract {
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
     }
+
+    /// Extend the contract instance TTL to maximum.
+    ///
+    /// This should be called during admin operations to ensure
+    /// the contract instance stays alive.
+    fn extend_contract_ttl(env: &Env) {
+        let max_ttl = env.storage().max_ttl();
+        
+        // Only extend TTL for keys that actually exist
+        let keys_to_extend = [
+            DataKey::Admin,
+            DataKey::FeeCollector,
+            DataKey::FeeBps,
+            DataKey::Paused,
+            DataKey::EscrowCounter,
+            DataKey::RefundCount,
+            DataKey::TotalFundedAmount,
+            DataKey::TotalRefundedAmount,
+            DataKey::TotalDisputedCount,
+            DataKey::TotalFeesCollected,
+            DataKey::TotalReleasedAmount,
+        ];
+        
+        for key in keys_to_extend.iter() {
+            if env.storage().persistent().has(key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(key, max_ttl, max_ttl);
+            }
+        }
+    }
 }
 
 #[contractimpl]
@@ -340,6 +367,7 @@ impl Contract {
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
+        Self::extend_contract_ttl(&env);
         Ok(())
     }
 
@@ -359,6 +387,7 @@ impl Contract {
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
+        Self::extend_contract_ttl(&env);
         Ok(())
     }
 
@@ -524,15 +553,40 @@ impl Contract {
         escrow.map(|e| e.items)
     }
 
-    /// Get a paginated list of escrows.
+    /// Get a paginated list of escrows with optional filtering.
+    ///
+    /// This function provides scalable escrow fetching without loading massive lists.
+    /// It supports pagination and filtering by status, buyer, or seller.
     ///
     /// # Arguments
     /// * `start` - The starting escrow ID (1-based)
-    /// * `limit` - Maximum number of escrows to return
+    /// * `limit` - Maximum number of escrows to return (max 100)
+    /// * `status_filter` - Optional filter by escrow status
+    /// * `buyer_filter` - Optional filter by buyer address
+    /// * `seller_filter` - Optional filter by seller address
     ///
     /// # Returns
-    /// A vector of optional escrows. Missing escrows (if any) are returned as None.
-    pub fn get_escrows(env: Env, start: u64, limit: u32) -> Vec<Option<Escrow>> {
+    /// A vector of escrows that match the filter criteria.
+    /// Only returns escrows that actually exist (no None values).
+    ///
+    /// # Examples
+    /// ```ignore
+    /// // Get first 10 escrows
+    /// let escrows = contract.get_escrows(env, 1, 10, None, None, None);
+    ///
+    /// // Get pending escrows for a specific buyer
+    /// let pending_escrows = contract.get_escrows(
+    ///     env, 1, 50, Some(EscrowStatus::Pending), Some(buyer), None
+    /// );
+    /// ```
+    pub fn get_escrows(
+        env: Env,
+        start: u64,
+        limit: u32,
+        status_filter: Option<EscrowStatus>,
+        buyer_filter: Option<Address>,
+        seller_filter: Option<Address>,
+    ) -> Vec<Escrow> {
         let counter: u64 = env
             .storage()
             .persistent()
@@ -546,16 +600,71 @@ impl Contract {
             return result;
         }
 
-        // Calculate end bound (inclusive)
-        let end = (start + limit as u64 - 1).min(counter);
+        // Enforce reasonable limit to prevent excessive gas usage
+        let effective_limit = limit.min(100);
 
-        // Iterate through IDs and fetch escrows
+        // Calculate end bound (inclusive)
+        let end = (start + effective_limit as u64 - 1).min(counter);
+
+        // Iterate through IDs and fetch escrows with filtering
         for id in start..=end {
-            let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(id));
-            result.push_back(escrow);
+            if let Some(escrow) = env.storage().persistent().get::<DataKey, Escrow>(&DataKey::Escrow(id)) {
+                let matches_filter = match (&status_filter, &buyer_filter, &seller_filter) {
+                    (None, None, None) => true, // No filters
+                    (Some(status), None, None) => escrow.status == *status,
+                    (None, Some(buyer), None) => escrow.buyer == *buyer,
+                    (None, None, Some(seller)) => escrow.seller == *seller,
+                    (Some(status), Some(buyer), None) => escrow.status == *status && escrow.buyer == *buyer,
+                    (Some(status), None, Some(seller)) => escrow.status == *status && escrow.seller == *seller,
+                    (None, Some(buyer), Some(seller)) => escrow.buyer == *buyer && escrow.seller == *seller,
+                    (Some(status), Some(buyer), Some(seller)) => {
+                        escrow.status == *status && escrow.buyer == *buyer && escrow.seller == *seller
+                    }
+                };
+
+                if matches_filter {
+                    result.push_back(escrow);
+                }
+            }
         }
 
         result
+    }
+
+    /// Get escrows by status with pagination.
+    ///
+    /// Convenience function for common use case of filtering by status.
+    ///
+    /// # Arguments
+    /// * `start` - The starting escrow ID (1-based)
+    /// * `limit` - Maximum number of escrows to return
+    /// * `status` - The escrow status to filter by
+    pub fn get_escrows_by_status(env: Env, start: u64, limit: u32, status: EscrowStatus) -> Vec<Escrow> {
+        Self::get_escrows(env, start, limit, Some(status), None, None)
+    }
+
+    /// Get escrows by buyer with pagination.
+    ///
+    /// Convenience function for common use case of filtering by buyer.
+    ///
+    /// # Arguments
+    /// * `start` - The starting escrow ID (1-based)
+    /// * `limit` - Maximum number of escrows to return
+    /// * `buyer` - The buyer address to filter by
+    pub fn get_escrows_by_buyer(env: Env, start: u64, limit: u32, buyer: Address) -> Vec<Escrow> {
+        Self::get_escrows(env, start, limit, None, Some(buyer), None)
+    }
+
+    /// Get escrows by seller with pagination.
+    ///
+    /// Convenience function for common use case of filtering by seller.
+    ///
+    /// # Arguments
+    /// * `start` - The starting escrow ID (1-based)
+    /// * `limit` - Maximum number of escrows to return
+    /// * `seller` - The seller address to filter by
+    pub fn get_escrows_by_seller(env: Env, start: u64, limit: u32, seller: Address) -> Vec<Escrow> {
+        Self::get_escrows(env, start, limit, None, None, Some(seller))
     }
 
     // =========================
@@ -995,6 +1104,28 @@ impl Contract {
         Ok(request_id)
     }
 
+    /// Extend the TTL for an individual escrow and its related storage entries.
+    ///
+    /// This function can be called by anyone to prevent long-running escrows
+    /// from expiring. It extends the TTL for the escrow record and all
+    /// associated storage entries including the duplicate prevention hash
+    /// and any refund requests.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow to extend
+    ///
+    /// # Requirements
+    /// - The escrow must exist
+    ///
+    /// # Events
+    /// Emits no events
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If the escrow doesn't exist
+    ///
+    /// # Gas Considerations
+    /// This function is designed to be gas-efficient and can be called
+    /// periodically for long-running escrows or disputes.
     pub fn bump_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         let escrow: Escrow = env
             .storage()
@@ -1003,11 +1134,14 @@ impl Contract {
             .ok_or(ContractError::EscrowNotFound)?;
 
         let max_ttl = env.storage().max_ttl();
+        
+        // Extend the main escrow record
         let escrow_key = DataKey::Escrow(escrow_id);
         env.storage()
             .persistent()
             .extend_ttl(&escrow_key, max_ttl, max_ttl);
 
+        // Extend the duplicate prevention hash
         let hash_key = DataKey::EscrowHash(Self::generate_escrow_hash(
             &env,
             &escrow.buyer,
@@ -1020,7 +1154,65 @@ impl Contract {
                 .extend_ttl(&hash_key, max_ttl, max_ttl);
         }
 
+        // Extend any associated refund requests and their history
+        let escrow_refunds: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowRefunds(escrow_id))
+            .unwrap_or(Vec::new(&env));
+
+        for refund_id in escrow_refunds.iter() {
+            let refund_key = DataKey::RefundRequest(refund_id);
+            if env.storage().persistent().has(&refund_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&refund_key, max_ttl, max_ttl);
+            }
+
+            // Extend refund history entries if they exist
+            let history_key = DataKey::RefundHistory(refund_id);
+            if env.storage().persistent().has(&history_key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&history_key, max_ttl, max_ttl);
+            }
+        }
+
+        // Extend the escrow refunds index if it exists
+        let refunds_index_key = DataKey::EscrowRefunds(escrow_id);
+        if env.storage().persistent().has(&refunds_index_key) {
+            env.storage()
+                .persistent()
+                .extend_ttl(&refunds_index_key, max_ttl, max_ttl);
+        }
+
         Ok(())
+    }
+
+    /// Batch extend TTL for multiple escrows.
+    ///
+    /// This is a gas-efficient way to extend multiple escrows at once.
+    /// Useful for maintenance operations or when handling many long-running escrows.
+    ///
+    /// # Arguments
+    /// * `escrow_ids` - Vector of escrow IDs to extend
+    ///
+    /// # Returns
+    /// Number of successfully extended escrows
+    ///
+    /// # Errors
+    /// This function does not fail if individual escrows are not found,
+    /// it simply skips them and continues with the rest.
+    pub fn bump_escrows_batch(env: Env, escrow_ids: Vec<u64>) -> u32 {
+        let mut extended_count = 0u32;
+        
+        for escrow_id in escrow_ids.iter() {
+            if Self::bump_escrow(env.clone(), escrow_id).is_ok() {
+                extended_count += 1;
+            }
+        }
+        
+        extended_count
     }
 
     /// Cancel an escrow that was never funded after the expiry window has elapsed.
@@ -1078,6 +1270,125 @@ impl Contract {
         Ok(())
     }
 
+    /// Batch cleanup of expired unfunded escrows.
+    ///
+    /// This function scans through a range of escrow IDs and removes any
+    /// that have expired without being funded. This is a gas-efficient
+    /// maintenance operation for cleaning up stale escrows.
+    ///
+    /// # Arguments
+    /// * `start_id` - Starting escrow ID to check (inclusive)
+    /// * `end_id` - Ending escrow ID to check (inclusive)
+    /// * `max_cleanups` - Maximum number of escrows to clean up in this call (to manage gas)
+    ///
+    /// # Returns
+    /// Vector of cleaned up escrow IDs
+    ///
+    /// # Gas Considerations
+    /// This function is designed to be gas-efficient by limiting the number
+    /// of cleanups per call. Callers can process ranges in batches.
+    pub fn cleanup_expired_unfunded(
+        env: Env,
+        start_id: u64,
+        end_id: u64,
+        max_cleanups: u32,
+    ) -> Vec<u64> {
+        let mut cleaned_up = Vec::new(&env);
+        let mut cleanup_count = 0u32;
+        let effective_max = max_cleanups.min(50); // Reasonable limit per call
+        
+        let counter: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0);
+        
+        let actual_end = end_id.min(counter);
+        let current_ledger = env.ledger().sequence();
+
+        for escrow_id in start_id..=actual_end {
+            if cleanup_count >= effective_max {
+                break; // Gas limit reached
+            }
+
+            if let Some(escrow) = env.storage().persistent().get::<DataKey, Escrow>(&DataKey::Escrow(escrow_id)) {
+                // Check if it's an expired unfunded escrow
+                if escrow.status == EscrowStatus::Pending {
+                    let expiry_ledger = escrow.created_at.saturating_add(UNFUNDED_EXPIRY_LEDGERS);
+                    
+                    if current_ledger >= expiry_ledger {
+                        // Clean up this escrow
+                        env.storage()
+                            .persistent()
+                            .remove(&DataKey::Escrow(escrow_id));
+
+                        // Remove the duplicate-prevention hash
+                        let hash = Self::generate_escrow_hash(
+                            &env,
+                            &escrow.buyer,
+                            &escrow.seller,
+                            &escrow.metadata,
+                        );
+                        env.storage()
+                            .persistent()
+                            .remove(&DataKey::EscrowHash(hash));
+
+                        // Emit event
+                        EscrowExpiredEvent {
+                            escrow_id,
+                            buyer: escrow.buyer,
+                            seller: escrow.seller,
+                        }
+                        .publish(&env);
+
+                        cleaned_up.push_back(escrow_id);
+                        cleanup_count += 1;
+                    }
+                }
+            }
+        }
+
+        cleaned_up
+    }
+
+    /// Get count of expired unfunded escrows in a range.
+    ///
+    /// This function counts how many escrows in the given range are expired
+    /// and still in Pending state. Useful for determining if cleanup is needed.
+    ///
+    /// # Arguments
+    /// * `start_id` - Starting escrow ID to check (inclusive)
+    /// * `end_id` - Ending escrow ID to check (inclusive)
+    ///
+    /// # Returns
+    /// Number of expired unfunded escrows found
+    pub fn count_expired_unfunded(env: Env, start_id: u64, end_id: u64) -> u32 {
+        let mut expired_count = 0u32;
+        
+        let counter: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0);
+        
+        let actual_end = end_id.min(counter);
+        let current_ledger = env.ledger().sequence();
+
+        for escrow_id in start_id..=actual_end {
+            if let Some(escrow) = env.storage().persistent().get::<DataKey, Escrow>(&DataKey::Escrow(escrow_id)) {
+                if escrow.status == EscrowStatus::Pending {
+                    let expiry_ledger = escrow.created_at.saturating_add(UNFUNDED_EXPIRY_LEDGERS);
+                    
+                    if current_ledger >= expiry_ledger {
+                        expired_count += 1;
+                    }
+                }
+            }
+        }
+
+        expired_count
+    }
+
     /// Resolve a disputed escrow.
     ///
     /// If the escrow has an assigned arbiter, only that arbiter may call this.
@@ -1106,8 +1417,6 @@ impl Contract {
             None => Self::assert_admin(&env)?,
         };
         let from_status = escrow.status.clone();
-
-        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
         if resolution == 0 {
             // Release to seller
@@ -1189,6 +1498,7 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::ProposedAdmin, &new_admin);
+        Self::extend_contract_ttl(&env);
         Ok(())
     }
 
@@ -1212,6 +1522,9 @@ impl Contract {
 
         // Clean up the proposal
         env.storage().persistent().remove(&DataKey::ProposedAdmin);
+
+        // Extend TTL after admin transfer
+        Self::extend_contract_ttl(&env);
 
         // Emit the event
         AdminTransferredEvent {
@@ -1245,6 +1558,7 @@ impl Contract {
         }
 
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+        Self::extend_contract_ttl(&env);
 
         FeeChangedEvent {
             old_fee_bps,

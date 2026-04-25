@@ -203,6 +203,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -303,6 +309,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -400,6 +412,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {

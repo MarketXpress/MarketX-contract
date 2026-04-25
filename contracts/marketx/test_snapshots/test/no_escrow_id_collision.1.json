@@ -420,6 +420,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -517,6 +523,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -620,6 +632,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -717,6 +735,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -820,6 +844,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -917,6 +947,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVAX5"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -1020,6 +1056,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -1117,6 +1159,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAYRE5"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {
@@ -1220,6 +1268,12 @@
                   },
                   {
                     "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
+                  },
+                  {
+                    "key": {
                       "symbol": "created_at"
                     },
                     "val": {
@@ -1317,6 +1371,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4BV5"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "cancellation_proposer"
+                    },
+                    "val": "void"
                   },
                   {
                     "key": {

@@ -99,6 +99,10 @@ use soroban_sdk::xdr::ToXdr;
 pub use errors::ContractError;
 pub use types::{
     AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
+    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
+    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+    CancellationProposedEvent,
     EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
     FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
     RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
@@ -846,13 +850,22 @@ impl Contract {
                 return Ok(());
             }
 
-            return Err(ContractError::InvalidEscrowState);
+            // If the other party already proposed, auto-accept the cancellation
+            let from_status = escrow.status.clone();
+            Self::refund_buyer(&env, &mut escrow);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Escrow(escrow_id), &escrow);
+            Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+            return Ok(());
         }
 
-        escrow.cancellation_proposer = Some(actor);
+        escrow.cancellation_proposer = Some(actor.clone());
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        CancellationProposedEvent { escrow_id, actor }.publish(&env);
 
         Ok(())
     }

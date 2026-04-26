@@ -1902,3 +1902,197 @@ fn test_cancel_unfunded_allows_escrow_recreation() {
     let new_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
     assert!(client.get_escrow(&new_id).is_some());
 }
+
+// =============================================================================
+// Rental / Subscription Escrow Tests (#178)
+// =============================================================================
+
+use crate::types::RentalStatus;
+
+fn setup_rental<'a>() -> (Env, ContractClient<'a>, Address, Address, Address, Address) {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let tenant = Address::generate(&env);
+    let landlord = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    token_admin.mint(&tenant, &1_000_000_000);
+
+    (env, client, tenant, landlord, token_id.address(), admin)
+}
+
+#[test]
+fn test_create_rental_success() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    let rental = client.get_rental(&rental_id).unwrap();
+
+    assert_eq!(rental.tenant, tenant);
+    assert_eq!(rental.landlord, landlord);
+    assert_eq!(rental.deposit_amount, 500_000);
+    assert_eq!(rental.recurring_amount, 100_000);
+    assert_eq!(rental.payments_remaining, 3);
+    assert_eq!(rental.status, RentalStatus::Active);
+    assert!(!rental.deposit_settled);
+    assert_eq!(rental.next_payment_due, 0); // not funded yet
+}
+
+#[test]
+fn test_create_rental_invalid_amount() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let result = client.try_create_rental(&tenant, &landlord, &token, &0, &100_000, &100, &3);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+
+    let result = client.try_create_rental(&tenant, &landlord, &token, &500_000, &0, &100, &3);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+
+    let result = client.try_create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &0);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+}
+
+#[test]
+fn test_fund_rental_deposit() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    let rental = client.get_rental(&rental_id).unwrap();
+    assert!(rental.next_payment_due > 0);
+    assert_eq!(rental.status, RentalStatus::Active);
+}
+
+#[test]
+fn test_fund_rental_deposit_twice_fails() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    let result = client.try_fund_rental_deposit(&rental_id);
+    assert_eq!(result, Err(Ok(ContractError::PaymentNotDue)));
+}
+
+#[test]
+fn test_pay_rent_full_lifecycle_returns_deposit() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let deposit = 500_000i128;
+    let rent = 100_000i128;
+    let interval = 100u32;
+    let payments = 3u32;
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &deposit, &rent, &interval, &payments);
+    client.fund_rental_deposit(&rental_id);
+
+    env.ledger().with_mut(|li| li.sequence_number += interval);
+    client.pay_rent(&rental_id);
+    assert_eq!(client.get_rental(&rental_id).unwrap().payments_remaining, 2);
+
+    env.ledger().with_mut(|li| li.sequence_number += interval);
+    client.pay_rent(&rental_id);
+    assert_eq!(client.get_rental(&rental_id).unwrap().payments_remaining, 1);
+
+    // Final payment — deposit auto-returned
+    env.ledger().with_mut(|li| li.sequence_number += interval);
+    client.pay_rent(&rental_id);
+
+    let rental = client.get_rental(&rental_id).unwrap();
+    assert_eq!(rental.payments_remaining, 0);
+    assert_eq!(rental.status, RentalStatus::Completed);
+    assert!(rental.deposit_settled);
+}
+
+#[test]
+fn test_pay_rent_before_due_fails() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    // Do NOT advance ledger — payment not yet due
+    let result = client.try_pay_rent(&rental_id);
+    assert_eq!(result, Err(Ok(ContractError::PaymentNotDue)));
+}
+
+#[test]
+fn test_landlord_can_return_deposit_early() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    client.return_deposit(&rental_id);
+
+    let rental = client.get_rental(&rental_id).unwrap();
+    assert_eq!(rental.status, RentalStatus::Completed);
+    assert!(rental.deposit_settled);
+}
+
+#[test]
+fn test_return_deposit_twice_fails() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
+    client.fund_rental_deposit(&rental_id);
+    client.return_deposit(&rental_id);
+
+    let result = client.try_return_deposit(&rental_id);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotActive)));
+}
+
+#[test]
+fn test_claim_deposit_on_default() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let interval = 100u32;
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &interval, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    // Advance past due date + full grace interval (default threshold)
+    env.ledger().with_mut(|li| li.sequence_number += interval * 2 + 1);
+
+    client.claim_deposit_on_default(&rental_id);
+
+    let rental = client.get_rental(&rental_id).unwrap();
+    assert_eq!(rental.status, RentalStatus::Defaulted);
+    assert!(rental.deposit_settled);
+}
+
+#[test]
+fn test_claim_deposit_before_default_threshold_fails() {
+    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+
+    let interval = 100u32;
+    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &interval, &3);
+    client.fund_rental_deposit(&rental_id);
+
+    // Only advance to the due date, not past the grace window
+    env.ledger().with_mut(|li| li.sequence_number += interval);
+
+    let result = client.try_claim_deposit_on_default(&rental_id);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotDefaulted)));
+}
+
+#[test]
+fn test_rental_not_found() {
+    let (_env, client, ..) = setup_rental();
+
+    let result = client.try_fund_rental_deposit(&999);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+
+    let result = client.try_pay_rent(&999);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+
+    let result = client.try_return_deposit(&999);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+
+    let result = client.try_claim_deposit_on_default(&999);
+    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+}

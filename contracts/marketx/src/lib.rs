@@ -98,15 +98,12 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
-    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    CancellationProposedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    DepositReturnedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus,
+    FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
+    RefundRequest, RefundRequestedEvent, RefundStatus, RentalCreatedEvent, RentalDefaultedEvent,
+    RentalEscrow, RentalStatus, RentPaidEvent, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -1276,5 +1273,333 @@ impl Contract {
             .persistent()
             .get(&DataKey::RefundCount)
             .unwrap_or(0)
+    }
+
+    // =========================
+    // 🏠 RENTAL / SUBSCRIPTION ESCROW
+    // =========================
+
+    /// Create a rental escrow.
+    ///
+    /// The tenant must subsequently call `fund_rental_deposit` to lock the
+    /// security deposit into the contract before the first payment is due.
+    ///
+    /// # Arguments
+    /// * `tenant` - The renter / subscriber
+    /// * `landlord` - The property owner / service provider
+    /// * `token` - SEP-41 token used for all payments
+    /// * `deposit_amount` - One-time security deposit held until lease end
+    /// * `recurring_amount` - Amount due each payment interval
+    /// * `interval_ledgers` - Ledgers between consecutive payments
+    /// * `payments_total` - Total number of recurring payments
+    ///
+    /// # Errors
+    /// * `InvalidEscrowAmount` - If any amount ≤ 0 or `payments_total` == 0
+    pub fn create_rental(
+        env: Env,
+        tenant: Address,
+        landlord: Address,
+        token: Address,
+        deposit_amount: i128,
+        recurring_amount: i128,
+        interval_ledgers: u32,
+        payments_total: u32,
+    ) -> Result<u64, ContractError> {
+        Self::assert_not_paused(&env)?;
+        tenant.require_auth();
+
+        if deposit_amount <= 0 || recurring_amount <= 0 || payments_total == 0 || interval_ledgers == 0 {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        let rental_id = {
+            let current: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::RentalCounter)
+                .unwrap_or(0);
+            let next = current.checked_add(1).ok_or(ContractError::EscrowIdOverflow)?;
+            env.storage().persistent().set(&DataKey::RentalCounter, &next);
+            next
+        };
+
+        let rental = RentalEscrow {
+            tenant: tenant.clone(),
+            landlord: landlord.clone(),
+            token: token.clone(),
+            deposit_amount,
+            recurring_amount,
+            interval_ledgers,
+            // First payment due one interval after deposit is funded; set to 0
+            // until `fund_rental_deposit` is called.
+            next_payment_due: 0,
+            payments_remaining: payments_total,
+            status: RentalStatus::Active,
+            deposit_settled: false,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RentalEscrow(rental_id), &rental);
+
+        RentalCreatedEvent {
+            rental_id,
+            tenant,
+            landlord,
+            token,
+            deposit_amount,
+            recurring_amount,
+            payments_total,
+        }
+        .publish(&env);
+
+        Ok(rental_id)
+    }
+
+    /// Fund the security deposit for a rental escrow.
+    ///
+    /// Must be called by the tenant after `create_rental`. Transfers
+    /// `deposit_amount` from the tenant into the contract and starts the
+    /// payment clock.
+    ///
+    /// # Errors
+    /// * `RentalNotFound` - If the rental ID does not exist
+    /// * `RentalNotActive` - If the rental is not in `Active` state
+    /// * `PaymentNotDue` - If the deposit has already been funded (`next_payment_due != 0`)
+    pub fn fund_rental_deposit(env: Env, rental_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut rental: RentalEscrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RentalEscrow(rental_id))
+            .ok_or(ContractError::RentalNotFound)?;
+
+        if rental.status != RentalStatus::Active {
+            return Err(ContractError::RentalNotActive);
+        }
+        if rental.next_payment_due != 0 {
+            return Err(ContractError::PaymentNotDue);
+        }
+
+        rental.tenant.require_auth();
+
+        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
+        token_client.transfer(
+            &rental.tenant,
+            &env.current_contract_address(),
+            &rental.deposit_amount,
+        );
+
+        rental.next_payment_due = env
+            .ledger()
+            .sequence()
+            .saturating_add(rental.interval_ledgers);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RentalEscrow(rental_id), &rental);
+
+        Ok(())
+    }
+
+    /// Pay the next recurring rent instalment.
+    ///
+    /// The tenant transfers `recurring_amount` directly to the landlord.
+    /// The deposit remains locked until all payments are complete.
+    /// When the last payment is made the deposit is automatically returned.
+    ///
+    /// # Errors
+    /// * `RentalNotFound` - If the rental ID does not exist
+    /// * `RentalNotActive` - If the rental is not in `Active` state
+    /// * `PaymentNotDue` - If the current ledger is before `next_payment_due`
+    /// * `AllPaymentsMade` - If `payments_remaining` is already 0
+    pub fn pay_rent(env: Env, rental_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut rental: RentalEscrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RentalEscrow(rental_id))
+            .ok_or(ContractError::RentalNotFound)?;
+
+        if rental.status != RentalStatus::Active {
+            return Err(ContractError::RentalNotActive);
+        }
+        if rental.payments_remaining == 0 {
+            return Err(ContractError::AllPaymentsMade);
+        }
+        if rental.next_payment_due == 0 || env.ledger().sequence() < rental.next_payment_due {
+            return Err(ContractError::PaymentNotDue);
+        }
+
+        rental.tenant.require_auth();
+
+        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
+        // Recurring payment goes directly to landlord (not held in escrow).
+        token_client.transfer(&rental.tenant, &rental.landlord, &rental.recurring_amount);
+
+        rental.payments_remaining -= 1;
+        rental.next_payment_due = env
+            .ledger()
+            .sequence()
+            .saturating_add(rental.interval_ledgers);
+
+        RentPaidEvent {
+            rental_id,
+            tenant: rental.tenant.clone(),
+            amount: rental.recurring_amount,
+            payments_remaining: rental.payments_remaining,
+        }
+        .publish(&env);
+
+        // Auto-return deposit when all payments are done.
+        if rental.payments_remaining == 0 {
+            Self::do_return_deposit(&env, rental_id, &mut rental)?;
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RentalEscrow(rental_id), &rental);
+
+        Ok(())
+    }
+
+    /// Explicitly return the security deposit to the tenant.
+    ///
+    /// Can be called by the landlord at any time to release the deposit early,
+    /// or by anyone once all payments have been made and the deposit has not
+    /// yet been settled.
+    ///
+    /// # Errors
+    /// * `RentalNotFound` - If the rental ID does not exist
+    /// * `RentalNotActive` - If the rental is not in `Active` state
+    /// * `DepositAlreadySettled` - If the deposit was already returned or claimed
+    pub fn return_deposit(env: Env, rental_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut rental: RentalEscrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RentalEscrow(rental_id))
+            .ok_or(ContractError::RentalNotFound)?;
+
+        if rental.status != RentalStatus::Active {
+            return Err(ContractError::RentalNotActive);
+        }
+        if rental.deposit_settled {
+            return Err(ContractError::DepositAlreadySettled);
+        }
+
+        // Only the landlord may return the deposit early.
+        rental.landlord.require_auth();
+
+        Self::do_return_deposit(&env, rental_id, &mut rental)?;
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RentalEscrow(rental_id), &rental);
+
+        Ok(())
+    }
+
+    /// Claim the security deposit after a tenant default.
+    ///
+    /// The landlord may call this when the tenant has missed a payment
+    /// (current ledger ≥ `next_payment_due` + `interval_ledgers`).
+    /// The rental is marked `Defaulted` and the deposit is transferred to
+    /// the landlord.
+    ///
+    /// # Errors
+    /// * `RentalNotFound` - If the rental ID does not exist
+    /// * `RentalNotActive` - If the rental is not in `Active` state
+    /// * `RentalNotDefaulted` - If the payment deadline has not been missed
+    /// * `DepositAlreadySettled` - If the deposit was already settled
+    pub fn claim_deposit_on_default(env: Env, rental_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut rental: RentalEscrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RentalEscrow(rental_id))
+            .ok_or(ContractError::RentalNotFound)?;
+
+        if rental.status != RentalStatus::Active {
+            return Err(ContractError::RentalNotActive);
+        }
+        if rental.deposit_settled {
+            return Err(ContractError::DepositAlreadySettled);
+        }
+
+        // Default window: one full interval past the due date.
+        let default_threshold = rental
+            .next_payment_due
+            .saturating_add(rental.interval_ledgers);
+        if env.ledger().sequence() < default_threshold {
+            return Err(ContractError::RentalNotDefaulted);
+        }
+
+        rental.landlord.require_auth();
+
+        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &rental.landlord,
+            &rental.deposit_amount,
+        );
+
+        rental.status = RentalStatus::Defaulted;
+        rental.deposit_settled = true;
+
+        RentalDefaultedEvent {
+            rental_id,
+            landlord: rental.landlord.clone(),
+            deposit_amount: rental.deposit_amount,
+        }
+        .publish(&env);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RentalEscrow(rental_id), &rental);
+
+        Ok(())
+    }
+
+    /// Fetch a rental escrow by ID.
+    pub fn get_rental(env: Env, rental_id: u64) -> Option<RentalEscrow> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::RentalEscrow(rental_id))
+    }
+
+    // ── private helper ────────────────────────────────────────────────────────
+
+    fn do_return_deposit(
+        env: &Env,
+        rental_id: u64,
+        rental: &mut RentalEscrow,
+    ) -> Result<(), ContractError> {
+        if rental.deposit_settled {
+            return Err(ContractError::DepositAlreadySettled);
+        }
+
+        let token_client = soroban_sdk::token::Client::new(env, &rental.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &rental.tenant,
+            &rental.deposit_amount,
+        );
+
+        rental.status = RentalStatus::Completed;
+        rental.deposit_settled = true;
+
+        DepositReturnedEvent {
+            rental_id,
+            tenant: rental.tenant.clone(),
+            amount: rental.deposit_amount,
+        }
+        .publish(env);
+
+        Ok(())
     }
 }

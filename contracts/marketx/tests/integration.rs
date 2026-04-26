@@ -17,7 +17,7 @@ fn bump_escrow_extends_ttl_via_public_api() {
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,

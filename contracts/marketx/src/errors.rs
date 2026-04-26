@@ -1,11 +1,13 @@
 use soroban_sdk::contracterror;
 
+/// Errors that can be returned by the MarketX contract.
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum ContractError {
     NotAdmin = 1,
     Unauthorized = 2,
     NotProposedAdmin = 3,
+    NotOracle = 4,
     EscrowNotFound = 10,
     InvalidEscrowState = 11,
     InvalidEscrowAmount = 13,
@@ -13,7 +15,6 @@ pub enum ContractError {
     EscrowIdOverflow = 40,
     InvalidFeeConfig = 50,
     MetadataTooLarge = 60,
-    MetadataAccessDenied = 61,
     DuplicateEscrow = 70,
     ItemNotFound = 80,
     ItemAlreadyReleased = 81,

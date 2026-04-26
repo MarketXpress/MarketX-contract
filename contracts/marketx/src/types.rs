@@ -37,6 +37,9 @@ pub enum DataKey {
     FeeCollector,
     FeeBps,
     MinFee,
+    MaxFee,
+    NativeAsset,
+    NativeFeeBps,
     ReentrancyLock,
     Admin,
     ProposedAdmin,
@@ -56,14 +59,9 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
-    MetadataVisibility(u64),
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MetadataVisibility {
-    Private,
-    Public,
+    PendingFee(Address, Address),
+    FeeWhitelist(Address),
+    Oracle,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -101,6 +99,8 @@ pub struct Escrow {
     /// Ledger sequence number at which this escrow was created.
     /// Used to enforce the unfunded expiry window.
     pub created_at: u32,
+    /// Optional shipping tracking ID for oracle verification.
+    pub tracking_id: Option<Bytes>,
 }
 
 /// Number of ledgers after creation within which an escrow must be funded.
@@ -137,6 +137,7 @@ pub struct EscrowCreatedEvent {
     pub amount: i128,
     pub status: EscrowStatus,
     pub arbiter: Option<Address>,
+    pub tracking_id: Option<Bytes>,
 }
 
 #[contractevent(topics = ["funds_released"], data_format = "vec")]
@@ -148,6 +149,14 @@ pub struct FundsReleasedEvent {
     pub fee: i128,
 }
 
+#[contractevent(topics = ["delivery_verified"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeliveryVerifiedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub tracking_id: Bytes,
+}
+
 #[contractevent(topics = ["fee_collected"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeCollectedEvent {
@@ -155,6 +164,16 @@ pub struct FeeCollectedEvent {
     pub escrow_id: u64,
     pub fee_collector: Address,
     pub fee: i128,
+}
+
+#[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeesWithdrawnEvent {
+    #[topic]
+    pub collector: Address,
+    #[topic]
+    pub token: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["status_change"], data_format = "vec")]
@@ -180,6 +199,16 @@ pub struct CancellationProposedEvent {
 pub struct FeeChangedEvent {
     pub old_fee_bps: u32,
     pub new_fee_bps: u32,
+    pub actor: Address,
+}
+
+#[contractevent(topics = ["fee_caps_changed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCapsChangedEvent {
+    pub old_min_fee: i128,
+    pub new_min_fee: i128,
+    pub old_max_fee: i128,
+    pub new_max_fee: i128,
     pub actor: Address,
 }
 
@@ -247,4 +276,28 @@ pub struct CounterEvidenceSubmittedEvent {
     pub escrow_id: u64,
     pub responder: Address,
     pub counter_evidence_hash: Option<Bytes>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowRequest {
+    pub seller: Address,
+    pub amount: i128,
+    pub metadata: Option<Bytes>,
+    pub arbiter: Option<Address>,
+    pub items: Option<Vec<EscrowItem>>,
+}
+
+#[contractevent(topics = ["bulk_escrow_created"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowCreatedEvent {
+    pub buyer: Address,
+    pub token: Address,
+    pub escrow_ids: Vec<u64>,
+#[contractevent(topics = ["fee_exemption"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeExemptionEvent {
+    pub address: Address,
+    pub exempted: bool,
+    pub actor: Address,
 }

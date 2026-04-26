@@ -98,11 +98,18 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
+    AdminTransferredEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, CancellationProposedEvent,
+    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowExpiredEvent,
+    EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+    UNFUNDED_EXPIRY_LEDGERS,
     AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    DepositReturnedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
     FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
-    RefundRequest, RefundRequestedEvent, RefundStatus, RentalCreatedEvent, RentalDefaultedEvent,
-    RentalEscrow, RentalStatus, RentPaidEvent, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
+    FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
+    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
     MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
@@ -272,6 +279,15 @@ impl Contract {
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
     }
+
+    fn add_pending_fee(env: &Env, collector: Address, token: Address, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + amount));
+    }
 }
 
 #[contractimpl]
@@ -292,7 +308,14 @@ impl Contract {
     ///
     /// # Errors
     /// This function cannot fail as it's the initialization function
-    pub fn initialize(env: Env, admin: Address, fee_collector: Address, fee_bps: u32) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        fee_collector: Address,
+        fee_bps: u32,
+        min_fee: i128,
+        max_fee: i128,
+    ) {
         admin.require_auth();
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
@@ -300,6 +323,8 @@ impl Contract {
             .persistent()
             .set(&DataKey::FeeCollector, &fee_collector);
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+        env.storage().persistent().set(&DataKey::MinFee, &min_fee);
+        env.storage().persistent().set(&DataKey::MaxFee, &max_fee);
 
         env.storage().persistent().set(&DataKey::Paused, &false);
         env.storage()
@@ -380,53 +405,7 @@ impl Contract {
     // 💰 ESCROW ACTIONS
     // =========================
 
-    /// Create a new escrow with optional metadata and multiple items.
-    ///
-    /// # Arguments
-    /// * `buyer` - The buyer's address
-    /// * `seller` - The seller's address
-    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
-    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
-    /// * `metadata` - Optional metadata (max 1KB)
-    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
-    ///               If provided, only this address may call `resolve_dispute` for this escrow.
-    /// * `items` - Optional array of items/milestones. If provided, each item can be released
-    ///             independently using `release_item`. The sum of item amounts must equal
-    ///             the total escrow amount.
-    ///
-    /// # Native XLM Support
-    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
-    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
-    /// making it fully compatible with all escrow operations.
-    ///
-    /// # Example - Native XLM Escrow with Items
-    /// ```ignore
-    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
-    /// let amount: i128 = 100_000_000; // 10 XLM
-    /// let xlm_address = /* native XLM SAC address */;
-    ///
-    /// // Create items for a multi-product purchase
-    /// let items = vec![
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
-    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
-    /// ];
-    ///
-    /// let escrow_id = client.create_escrow(
-    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
-    /// );
-    ///
-    /// // Later, release individual items as they're delivered
-    /// client.release_item(&escrow_id, &0); // Release product 1
-    /// client.release_item(&escrow_id, &1); // Release product 2
-    /// ```
-    ///
-    /// # Errors
-    /// * `MetadataTooLarge` - If metadata exceeds 1KB
-    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
-    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
-    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
-    pub fn create_escrow(
+    fn create_escrow_internal(
         env: Env,
         buyer: Address,
         seller: Address,
@@ -436,9 +415,6 @@ impl Contract {
         arbiter: Option<Address>,
         items: Option<Vec<EscrowItem>>,
     ) -> Result<u64, ContractError> {
-        Self::assert_not_paused(&env)?;
-        buyer.require_auth();
-
         Self::validate_metadata(&metadata)?;
 
         if amount <= 0 {
@@ -503,6 +479,104 @@ impl Contract {
         event.publish(&env);
 
         Ok(escrow_id)
+    }
+
+    /// Create a new escrow with optional metadata and multiple items.
+    ///
+    /// # Arguments
+    /// * `buyer` - The buyer's address
+    /// * `seller` - The seller's address
+    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
+    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
+    /// * `metadata` - Optional metadata (max 1KB)
+    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
+    ///               If provided, only this address may call `resolve_dispute` for this escrow.
+    /// * `items` - Optional array of items/milestones. If provided, each item can be released
+    ///             independently using `release_item`. The sum of item amounts must equal
+    ///             the total escrow amount.
+    ///
+    /// # Native XLM Support
+    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
+    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
+    /// making it fully compatible with all escrow operations.
+    ///
+    /// # Example - Native XLM Escrow with Items
+    /// ```ignore
+    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
+    /// let amount: i128 = 100_000_000; // 10 XLM
+    /// let xlm_address = /* native XLM SAC address */;
+    ///
+    /// // Create items for a multi-product purchase
+    /// let items = vec![
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
+    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
+    /// ];
+    ///
+    /// let escrow_id = client.create_escrow(
+    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
+    /// );
+    ///
+    /// // Later, release individual items as they're delivered
+    /// client.release_item(&escrow_id, &0); // Release product 1
+    /// client.release_item(&escrow_id, &1); // Release product 2
+    /// ```
+    ///
+    /// # Errors
+    /// * `MetadataTooLarge` - If metadata exceeds 1KB
+    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
+    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
+    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
+    pub fn create_escrow(
+        env: Env,
+        buyer: Address,
+        seller: Address,
+        token: Address,
+        amount: i128,
+        metadata: Option<Bytes>,
+        arbiter: Option<Address>,
+        items: Option<Vec<EscrowItem>>,
+    ) -> Result<u64, ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items)
+    }
+
+    /// Create multiple escrows in a single transaction (Bulk Creation).
+    /// Useful for cart checkouts involving multiple sellers.
+    pub fn create_bulk_escrows(
+        env: Env,
+        buyer: Address,
+        token: Address,
+        requests: Vec<BulkEscrowRequest>,
+    ) -> Result<Vec<u64>, ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        let mut ids = Vec::new(&env);
+        for request in requests.iter() {
+            let id = Self::create_escrow_internal(
+                env.clone(),
+                buyer.clone(),
+                request.seller.clone(),
+                token.clone(),
+                request.amount,
+                request.metadata.clone(),
+                request.arbiter.clone(),
+                request.items.clone(),
+            )?;
+            ids.push_back(id);
+        }
+
+        BulkEscrowCreatedEvent {
+            buyer,
+            token,
+            escrow_ids: ids.clone(),
+        }
+        .publish(&env);
+
+        Ok(ids)
     }
 
     pub fn get_escrow(env: Env, escrow_id: u64) -> Option<Escrow> {
@@ -649,12 +723,63 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
+        let mut fee_bps: u32 = env
+        // Whitelisted buyers (partners/internal) pay zero fees.
+        let is_exempt: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
+            .unwrap_or(false);
         let fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
             .unwrap_or(0);
-        let fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+
+        // Special logic for Native XLM
+        if let Some(native_asset) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::NativeAsset)
+        {
+            if escrow.token == native_asset {
+                fee_bps = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::NativeFeeBps)
+                    .unwrap_or(fee_bps);
+            }
+        }
+
+        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+
+        let min_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0);
+        let max_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0);
+
+        if fee < min_fee {
+            fee = min_fee;
+        }
+        if max_fee > 0 && fee > max_fee {
+            fee = max_fee;
+        }
+
+        // Ensure fee doesn't exceed the escrow amount
+        if fee > escrow.amount {
+            fee = escrow.amount;
+        }
+        let fee: i128 = if is_exempt {
+            0
+        } else {
+            escrow.amount * (fee_bps as i128) / 10_000
+        };
         let seller_amount = escrow.amount - fee;
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -675,14 +800,17 @@ impl Contract {
                 .get(&DataKey::FeeCollector)
                 .ok_or(ContractError::InvalidFeeConfig)?;
 
-            #[allow(clippy::needless_borrows_for_generic_args)]
-            token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
+            Self::add_pending_fee(&env, fee_collector, escrow.token.clone(), fee);
 
             Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
 
             FeeCollectedEvent {
                 escrow_id,
-                fee_collector,
+                fee_collector: env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::FeeCollector)
+                    .unwrap(), // Re-fetch to satisfy borrow checker if needed, or just use the one above
                 fee,
             }
             .publish(&env);
@@ -1260,6 +1388,111 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    pub fn set_fee_caps(env: Env, min_fee: i128, max_fee: i128) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+
+        if max_fee > 0 && min_fee > max_fee {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+
+        let old_min_fee = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0);
+        let old_max_fee = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0);
+
+        env.storage().persistent().set(&DataKey::MinFee, &min_fee);
+        env.storage().persistent().set(&DataKey::MaxFee, &max_fee);
+
+        FeeCapsChangedEvent {
+            old_min_fee,
+            new_min_fee: min_fee,
+            old_max_fee,
+            new_max_fee: max_fee,
+            actor: admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn set_native_fee(
+        env: Env,
+        native_token: Address,
+        native_fee_bps: u32,
+    ) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        if native_fee_bps > 1000 {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::NativeAsset, &native_token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NativeFeeBps, &native_fee_bps);
+
+        Ok(())
+    }
+
+    pub fn get_native_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NativeFeeBps)
+            .unwrap_or(0)
+    }
+
+    pub fn get_native_asset(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::NativeAsset)
+    }
+
+    pub fn get_min_fee(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0)
+    }
+
+    pub fn get_max_fee(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0)
+    /// Add an address to the fee exemption whitelist. Admin only.
+    pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeWhitelist(address.clone()), &true);
+        FeeExemptionEvent { address, exempted: true, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Remove an address from the fee exemption whitelist. Admin only.
+    pub fn remove_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FeeWhitelist(address.clone()));
+        FeeExemptionEvent { address, exempted: false, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Check whether an address is fee-exempt.
+    pub fn is_fee_exempt(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(address))
+            .unwrap_or(false)
+    }
+
     /// Get a refund request by ID.
     pub fn get_refund_request(env: Env, request_id: u64) -> Option<RefundRequest> {
         env.storage()
@@ -1275,331 +1508,44 @@ impl Contract {
             .unwrap_or(0)
     }
 
-    // =========================
-    // 🏠 RENTAL / SUBSCRIPTION ESCROW
-    // =========================
+    /// Withdraw accumulated fees for a specific token.
+    ///
+    /// This follows the pull pattern for revenue sharing, allowing collectors
+    /// to claim their fees at their convenience.
+    pub fn withdraw_fees(env: Env, collector: Address, token: Address) -> Result<(), ContractError> {
+        collector.require_auth();
 
-    /// Create a rental escrow.
-    ///
-    /// The tenant must subsequently call `fund_rental_deposit` to lock the
-    /// security deposit into the contract before the first payment is due.
-    ///
-    /// # Arguments
-    /// * `tenant` - The renter / subscriber
-    /// * `landlord` - The property owner / service provider
-    /// * `token` - SEP-41 token used for all payments
-    /// * `deposit_amount` - One-time security deposit held until lease end
-    /// * `recurring_amount` - Amount due each payment interval
-    /// * `interval_ledgers` - Ledgers between consecutive payments
-    /// * `payments_total` - Total number of recurring payments
-    ///
-    /// # Errors
-    /// * `InvalidEscrowAmount` - If any amount ≤ 0 or `payments_total` == 0
-    pub fn create_rental(
-        env: Env,
-        tenant: Address,
-        landlord: Address,
-        token: Address,
-        deposit_amount: i128,
-        recurring_amount: i128,
-        interval_ledgers: u32,
-        payments_total: u32,
-    ) -> Result<u64, ContractError> {
-        Self::assert_not_paused(&env)?;
-        tenant.require_auth();
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(ContractError::InvalidEscrowAmount)?;
 
-        if deposit_amount <= 0 || recurring_amount <= 0 || payments_total == 0 || interval_ledgers == 0 {
+        if amount <= 0 {
             return Err(ContractError::InvalidEscrowAmount);
         }
 
-        let rental_id = {
-            let current: u64 = env
-                .storage()
-                .persistent()
-                .get(&DataKey::RentalCounter)
-                .unwrap_or(0);
-            let next = current.checked_add(1).ok_or(ContractError::EscrowIdOverflow)?;
-            env.storage().persistent().set(&DataKey::RentalCounter, &next);
-            next
-        };
+        env.storage().persistent().remove(&key);
 
-        let rental = RentalEscrow {
-            tenant: tenant.clone(),
-            landlord: landlord.clone(),
-            token: token.clone(),
-            deposit_amount,
-            recurring_amount,
-            interval_ledgers,
-            // First payment due one interval after deposit is funded; set to 0
-            // until `fund_rental_deposit` is called.
-            next_payment_due: 0,
-            payments_remaining: payments_total,
-            status: RentalStatus::Active,
-            deposit_settled: false,
-        };
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &collector, &amount);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::RentalEscrow(rental_id), &rental);
-
-        RentalCreatedEvent {
-            rental_id,
-            tenant,
-            landlord,
+        FeesWithdrawnEvent {
+            collector,
             token,
-            deposit_amount,
-            recurring_amount,
-            payments_total,
+            amount,
         }
         .publish(&env);
 
-        Ok(rental_id)
-    }
-
-    /// Fund the security deposit for a rental escrow.
-    ///
-    /// Must be called by the tenant after `create_rental`. Transfers
-    /// `deposit_amount` from the tenant into the contract and starts the
-    /// payment clock.
-    ///
-    /// # Errors
-    /// * `RentalNotFound` - If the rental ID does not exist
-    /// * `RentalNotActive` - If the rental is not in `Active` state
-    /// * `PaymentNotDue` - If the deposit has already been funded (`next_payment_due != 0`)
-    pub fn fund_rental_deposit(env: Env, rental_id: u64) -> Result<(), ContractError> {
-        Self::assert_not_paused(&env)?;
-
-        let mut rental: RentalEscrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RentalEscrow(rental_id))
-            .ok_or(ContractError::RentalNotFound)?;
-
-        if rental.status != RentalStatus::Active {
-            return Err(ContractError::RentalNotActive);
-        }
-        if rental.next_payment_due != 0 {
-            return Err(ContractError::PaymentNotDue);
-        }
-
-        rental.tenant.require_auth();
-
-        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
-        token_client.transfer(
-            &rental.tenant,
-            &env.current_contract_address(),
-            &rental.deposit_amount,
-        );
-
-        rental.next_payment_due = env
-            .ledger()
-            .sequence()
-            .saturating_add(rental.interval_ledgers);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RentalEscrow(rental_id), &rental);
-
         Ok(())
     }
 
-    /// Pay the next recurring rent instalment.
-    ///
-    /// The tenant transfers `recurring_amount` directly to the landlord.
-    /// The deposit remains locked until all payments are complete.
-    /// When the last payment is made the deposit is automatically returned.
-    ///
-    /// # Errors
-    /// * `RentalNotFound` - If the rental ID does not exist
-    /// * `RentalNotActive` - If the rental is not in `Active` state
-    /// * `PaymentNotDue` - If the current ledger is before `next_payment_due`
-    /// * `AllPaymentsMade` - If `payments_remaining` is already 0
-    pub fn pay_rent(env: Env, rental_id: u64) -> Result<(), ContractError> {
-        Self::assert_not_paused(&env)?;
-
-        let mut rental: RentalEscrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RentalEscrow(rental_id))
-            .ok_or(ContractError::RentalNotFound)?;
-
-        if rental.status != RentalStatus::Active {
-            return Err(ContractError::RentalNotActive);
-        }
-        if rental.payments_remaining == 0 {
-            return Err(ContractError::AllPaymentsMade);
-        }
-        if rental.next_payment_due == 0 || env.ledger().sequence() < rental.next_payment_due {
-            return Err(ContractError::PaymentNotDue);
-        }
-
-        rental.tenant.require_auth();
-
-        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
-        // Recurring payment goes directly to landlord (not held in escrow).
-        token_client.transfer(&rental.tenant, &rental.landlord, &rental.recurring_amount);
-
-        rental.payments_remaining -= 1;
-        rental.next_payment_due = env
-            .ledger()
-            .sequence()
-            .saturating_add(rental.interval_ledgers);
-
-        RentPaidEvent {
-            rental_id,
-            tenant: rental.tenant.clone(),
-            amount: rental.recurring_amount,
-            payments_remaining: rental.payments_remaining,
-        }
-        .publish(&env);
-
-        // Auto-return deposit when all payments are done.
-        if rental.payments_remaining == 0 {
-            Self::do_return_deposit(&env, rental_id, &mut rental)?;
-        }
-
+    /// Get the pending fee balance for a collector and token.
+    pub fn get_pending_fee(env: Env, collector: Address, token: Address) -> i128 {
         env.storage()
             .persistent()
-            .set(&DataKey::RentalEscrow(rental_id), &rental);
-
-        Ok(())
-    }
-
-    /// Explicitly return the security deposit to the tenant.
-    ///
-    /// Can be called by the landlord at any time to release the deposit early,
-    /// or by anyone once all payments have been made and the deposit has not
-    /// yet been settled.
-    ///
-    /// # Errors
-    /// * `RentalNotFound` - If the rental ID does not exist
-    /// * `RentalNotActive` - If the rental is not in `Active` state
-    /// * `DepositAlreadySettled` - If the deposit was already returned or claimed
-    pub fn return_deposit(env: Env, rental_id: u64) -> Result<(), ContractError> {
-        Self::assert_not_paused(&env)?;
-
-        let mut rental: RentalEscrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RentalEscrow(rental_id))
-            .ok_or(ContractError::RentalNotFound)?;
-
-        if rental.status != RentalStatus::Active {
-            return Err(ContractError::RentalNotActive);
-        }
-        if rental.deposit_settled {
-            return Err(ContractError::DepositAlreadySettled);
-        }
-
-        // Only the landlord may return the deposit early.
-        rental.landlord.require_auth();
-
-        Self::do_return_deposit(&env, rental_id, &mut rental)?;
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RentalEscrow(rental_id), &rental);
-
-        Ok(())
-    }
-
-    /// Claim the security deposit after a tenant default.
-    ///
-    /// The landlord may call this when the tenant has missed a payment
-    /// (current ledger ≥ `next_payment_due` + `interval_ledgers`).
-    /// The rental is marked `Defaulted` and the deposit is transferred to
-    /// the landlord.
-    ///
-    /// # Errors
-    /// * `RentalNotFound` - If the rental ID does not exist
-    /// * `RentalNotActive` - If the rental is not in `Active` state
-    /// * `RentalNotDefaulted` - If the payment deadline has not been missed
-    /// * `DepositAlreadySettled` - If the deposit was already settled
-    pub fn claim_deposit_on_default(env: Env, rental_id: u64) -> Result<(), ContractError> {
-        Self::assert_not_paused(&env)?;
-
-        let mut rental: RentalEscrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::RentalEscrow(rental_id))
-            .ok_or(ContractError::RentalNotFound)?;
-
-        if rental.status != RentalStatus::Active {
-            return Err(ContractError::RentalNotActive);
-        }
-        if rental.deposit_settled {
-            return Err(ContractError::DepositAlreadySettled);
-        }
-
-        // Default window: one full interval past the due date.
-        let default_threshold = rental
-            .next_payment_due
-            .saturating_add(rental.interval_ledgers);
-        if env.ledger().sequence() < default_threshold {
-            return Err(ContractError::RentalNotDefaulted);
-        }
-
-        rental.landlord.require_auth();
-
-        let token_client = soroban_sdk::token::Client::new(&env, &rental.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &rental.landlord,
-            &rental.deposit_amount,
-        );
-
-        rental.status = RentalStatus::Defaulted;
-        rental.deposit_settled = true;
-
-        RentalDefaultedEvent {
-            rental_id,
-            landlord: rental.landlord.clone(),
-            deposit_amount: rental.deposit_amount,
-        }
-        .publish(&env);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::RentalEscrow(rental_id), &rental);
-
-        Ok(())
-    }
-
-    /// Fetch a rental escrow by ID.
-    pub fn get_rental(env: Env, rental_id: u64) -> Option<RentalEscrow> {
-        env.storage()
-            .persistent()
-            .get(&DataKey::RentalEscrow(rental_id))
-    }
-
-    // ── private helper ────────────────────────────────────────────────────────
-
-    fn do_return_deposit(
-        env: &Env,
-        rental_id: u64,
-        rental: &mut RentalEscrow,
-    ) -> Result<(), ContractError> {
-        if rental.deposit_settled {
-            return Err(ContractError::DepositAlreadySettled);
-        }
-
-        let token_client = soroban_sdk::token::Client::new(env, &rental.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &rental.tenant,
-            &rental.deposit_amount,
-        );
-
-        rental.status = RentalStatus::Completed;
-        rental.deposit_settled = true;
-
-        DepositReturnedEvent {
-            rental_id,
-            tenant: rental.tenant.clone(),
-            amount: rental.deposit_amount,
-        }
-        .publish(env);
-
-        Ok(())
+            .get(&DataKey::PendingFee(collector, token))
+            .unwrap_or(0)
     }
 }

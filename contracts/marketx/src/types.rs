@@ -37,6 +37,9 @@ pub enum DataKey {
     FeeCollector,
     FeeBps,
     MinFee,
+    MaxFee,
+    NativeAsset,
+    NativeFeeBps,
     ReentrancyLock,
     Admin,
     ProposedAdmin,
@@ -56,96 +59,8 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
-
-    // Rental escrow keys
-    RentalEscrow(u64),
-    RentalCounter,
-}
-
-// ─── Rental / Subscription Escrow ────────────────────────────────────────────
-
-/// Status of a rental escrow.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RentalStatus {
-    /// Deposit held; recurring payments ongoing.
-    Active,
-    /// All payments made; deposit returned to tenant.
-    Completed,
-    /// Tenant missed a payment; deposit forfeited to landlord.
-    Defaulted,
-    /// Under dispute resolution.
-    Disputed,
-}
-
-/// A rental / subscription escrow.
-///
-/// The tenant pays a one-time security deposit up-front plus `payments_total`
-/// recurring payments of `recurring_amount` every `interval_ledgers` ledgers.
-/// When all payments are made the deposit is returned; if the tenant misses a
-/// payment the landlord can claim the deposit.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RentalEscrow {
-    pub tenant: Address,
-    pub landlord: Address,
-    pub token: Address,
-    /// Security deposit held in escrow for the full rental term.
-    pub deposit_amount: i128,
-    /// Amount due each payment interval.
-    pub recurring_amount: i128,
-    /// Ledgers between consecutive payments.
-    pub interval_ledgers: u32,
-    /// Ledger sequence at which the next payment becomes due.
-    pub next_payment_due: u32,
-    /// Number of payments still outstanding.
-    pub payments_remaining: u32,
-    pub status: RentalStatus,
-    /// Whether the deposit has been settled (returned or claimed).
-    pub deposit_settled: bool,
-}
-
-// ─── Rental events ───────────────────────────────────────────────────────────
-
-#[contractevent(topics = ["rental_created"], data_format = "vec")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RentalCreatedEvent {
-    #[topic]
-    pub rental_id: u64,
-    pub tenant: Address,
-    pub landlord: Address,
-    pub token: Address,
-    pub deposit_amount: i128,
-    pub recurring_amount: i128,
-    pub payments_total: u32,
-}
-
-#[contractevent(topics = ["rent_paid"], data_format = "vec")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RentPaidEvent {
-    #[topic]
-    pub rental_id: u64,
-    pub tenant: Address,
-    pub amount: i128,
-    pub payments_remaining: u32,
-}
-
-#[contractevent(topics = ["deposit_returned"], data_format = "vec")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DepositReturnedEvent {
-    #[topic]
-    pub rental_id: u64,
-    pub tenant: Address,
-    pub amount: i128,
-}
-
-#[contractevent(topics = ["rental_defaulted"], data_format = "vec")]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RentalDefaultedEvent {
-    #[topic]
-    pub rental_id: u64,
-    pub landlord: Address,
-    pub deposit_amount: i128,
+    PendingFee(Address, Address),
+    FeeWhitelist(Address),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -239,6 +154,16 @@ pub struct FeeCollectedEvent {
     pub fee: i128,
 }
 
+#[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeesWithdrawnEvent {
+    #[topic]
+    pub collector: Address,
+    #[topic]
+    pub token: Address,
+    pub amount: i128,
+}
+
 #[contractevent(topics = ["status_change"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatusChangeEvent {
@@ -262,6 +187,16 @@ pub struct CancellationProposedEvent {
 pub struct FeeChangedEvent {
     pub old_fee_bps: u32,
     pub new_fee_bps: u32,
+    pub actor: Address,
+}
+
+#[contractevent(topics = ["fee_caps_changed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCapsChangedEvent {
+    pub old_min_fee: i128,
+    pub new_min_fee: i128,
+    pub old_max_fee: i128,
+    pub new_max_fee: i128,
     pub actor: Address,
 }
 
@@ -329,4 +264,28 @@ pub struct CounterEvidenceSubmittedEvent {
     pub escrow_id: u64,
     pub responder: Address,
     pub counter_evidence_hash: Option<Bytes>,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowRequest {
+    pub seller: Address,
+    pub amount: i128,
+    pub metadata: Option<Bytes>,
+    pub arbiter: Option<Address>,
+    pub items: Option<Vec<EscrowItem>>,
+}
+
+#[contractevent(topics = ["bulk_escrow_created"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowCreatedEvent {
+    pub buyer: Address,
+    pub token: Address,
+    pub escrow_ids: Vec<u64>,
+#[contractevent(topics = ["fee_exemption"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeExemptionEvent {
+    pub address: Address,
+    pub exempted: bool,
+    pub actor: Address,
 }

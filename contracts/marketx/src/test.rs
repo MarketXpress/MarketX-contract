@@ -10,7 +10,10 @@ use soroban_sdk::{
 use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
 use crate::types::{EscrowItem, MAX_METADATA_SIZE};
-use crate::{Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent, StatusChangeEvent};
+use crate::{
+    BulkEscrowCreatedEvent, BulkEscrowRequest, Contract, ContractClient, EscrowCreatedEvent,
+    FundsReleasedEvent, StatusChangeEvent,
+};
 
 fn setup<'a>() -> (Env, ContractClient<'a>) {
     let env = Env::default();
@@ -26,7 +29,7 @@ fn admin_can_pause_and_unpause() {
     let collector = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250);
+    client.initialize(&admin, &collector, &250, &0, &0);
 
     assert!(!client.is_paused());
 
@@ -52,11 +55,11 @@ fn non_admin_cannot_pause() {
             invoke: &MockAuthInvoke {
                 contract: &client.address,
                 fn_name: "initialize",
-                args: (&admin, &collector, 250u32).into_val(&env),
+                args: (&admin, &collector, 250u32, 0i128, 0i128).into_val(&env),
                 sub_invokes: &[],
             },
         }])
-        .initialize(&admin, &collector, &250);
+        .initialize(&admin, &collector, &250, &0, &0);
 
     // Call pause as non_admin, which expects admin auth.
     // This should trap, because admin.require_auth() fails.
@@ -81,7 +84,7 @@ fn admin_rotation_flow() {
     let collector = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250);
+    client.initialize(&admin, &collector, &250, &0, &0);
 
     // Transfer and accept admin
     client.transfer_admin(&new_admin);
@@ -98,7 +101,7 @@ fn accept_admin_fails_if_none_proposed() {
     let collector = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250);
+    client.initialize(&admin, &collector, &250, &0, &0);
 
     // Attempt to accept without any proposal
     let result = client.try_accept_admin();
@@ -120,11 +123,11 @@ fn transfer_admin_fails_if_not_admin() {
             invoke: &MockAuthInvoke {
                 contract: &client.address,
                 fn_name: "initialize",
-                args: (&admin, &collector, 250u32).into_val(&env),
+                args: (&admin, &collector, 250u32, 0i128, 0i128).into_val(&env),
                 sub_invokes: &[],
             },
         }])
-        .initialize(&admin, &collector, &250);
+        .initialize(&admin, &collector, &250, &0, &0);
 
     // Attempt to transfer as not_admin. It should trap since admin.require_auth() fails.
     client
@@ -155,11 +158,11 @@ fn accept_admin_fails_if_unauthorized() {
             invoke: &MockAuthInvoke {
                 contract: &client.address,
                 fn_name: "initialize",
-                args: (&admin, &collector, 250u32).into_val(&env),
+                args: (&admin, &collector, 250u32, 0i128, 0i128).into_val(&env),
                 sub_invokes: &[],
             },
         }])
-        .initialize(&admin, &collector, &250);
+        .initialize(&admin, &collector, &250, &0, &0);
 
     client
         .mock_auths(&[MockAuth {
@@ -194,7 +197,7 @@ fn escrow_actions_blocked_when_paused() {
     let collector = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250);
+    client.initialize(&admin, &collector, &250, &0, &0);
     client.pause();
 
     let result = client.try_fund_escrow(&1u64);
@@ -209,7 +212,7 @@ fn escrow_ids_increment_sequentially() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let id1 = client.create_escrow(
         &Address::generate(&env),
@@ -252,7 +255,7 @@ fn no_escrow_id_collision() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let mut ids = std::vec::Vec::new();
 
@@ -273,7 +276,7 @@ fn escrow_counter_overflow_fails() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     env.as_contract(&client.address, || {
         env.storage()
@@ -294,7 +297,7 @@ fn test_metadata_stored_successfully() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let metadata = Bytes::from_slice(&env, b"order_ref:12345");
     let metadata_opt = Some(metadata.clone());
@@ -318,7 +321,7 @@ fn test_metadata_none_stored_successfully() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     // Create escrow without metadata
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
@@ -339,7 +342,7 @@ fn test_oversized_metadata_rejected() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let oversized_data = std::vec![0u8; (MAX_METADATA_SIZE + 1) as usize];
     let oversized_metadata = Some(Bytes::from_slice(&env, &oversized_data));
@@ -365,7 +368,7 @@ fn test_metadata_at_max_size_accepted() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let max_data = std::vec![0u8; MAX_METADATA_SIZE as usize];
     let max_metadata = Some(Bytes::from_slice(&env, &max_data));
@@ -383,7 +386,7 @@ fn test_get_escrow_metadata_for_nonexistent_escrow() {
     let admin = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let metadata = client.get_escrow_metadata(&999u64);
     assert_eq!(metadata, None);
@@ -398,7 +401,7 @@ fn test_duplicate_escrow_rejected() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let metadata = Some(Bytes::from_slice(&env, b"order_ref:12345"));
 
@@ -420,7 +423,7 @@ fn test_distinct_escrows_allowed() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let metadata1 = Some(Bytes::from_slice(&env, b"order_ref:12345"));
     let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &metadata1, &None, &None);
@@ -454,7 +457,7 @@ fn test_duplicate_escrow_with_none_metadata() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     // Create first escrow with no metadata
     let escrow_id1 = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
@@ -474,7 +477,7 @@ fn test_escrow_hash_stored_correctly() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let metadata = Some(Bytes::from_slice(&env, b"order_ref:unique_hash_test"));
 
@@ -496,7 +499,7 @@ fn test_analytics_aggregation() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     assert_eq!(client.get_total_escrows(), 0);
     assert_eq!(client.get_total_funded_amount(), 0);
@@ -538,7 +541,7 @@ fn buyer_can_release_escrow() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&client.address, &1000);
 
@@ -569,7 +572,7 @@ fn release_fails_if_not_pending() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -595,7 +598,7 @@ fn release_fails_for_nonexistent_escrow() {
     let admin = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let result = client.try_release_escrow(&999u64);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
@@ -613,7 +616,7 @@ fn buyer_can_fund_escrow() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&buyer, &1000);
     assert_eq!(token.balance(&buyer), 1000);
@@ -648,7 +651,7 @@ fn fund_fails_if_not_pending() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
     token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
@@ -683,7 +686,7 @@ fn fund_fails_for_nonexistent_escrow() {
     let admin = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let result = client.try_fund_escrow(&999u64);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
@@ -699,7 +702,7 @@ fn fund_fails_if_buyer_has_insufficient_balance() {
     let token_id = env.register_stellar_asset_contract_v2(admin.clone());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -727,7 +730,7 @@ fn seller_can_accept_buyer_cancellation_and_refund_immediately() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&buyer, &1000);
     let escrow_id = client.create_escrow(&buyer, &seller, &token_id.address(), &1000, &None, &None, &None);
@@ -754,7 +757,7 @@ fn accept_cancellation_fails_without_prior_proposal() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -773,7 +776,7 @@ fn cancellation_fails_after_partial_item_release() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let mut items = Vec::new(&env);
     items.push_back(EscrowItem {
@@ -818,7 +821,7 @@ fn test_create_escrow_stores_arbiter() {
     let arbiter = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -843,7 +846,7 @@ fn test_create_escrow_without_arbiter_stores_none() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -861,7 +864,7 @@ fn test_create_escrow_emits_indexable_event() {
     let arbiter = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -901,7 +904,7 @@ fn test_arbiter_can_resolve_dispute() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&client.address, &1000);
 
@@ -945,7 +948,7 @@ fn test_release_emits_funds_and_status_change_events() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
     token_admin.mint(&client.address, &1000);
 
     let escrow_id = client.create_escrow(
@@ -995,7 +998,7 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&client.address, &1000);
 
@@ -1040,7 +1043,7 @@ fn test_resolve_dispute_emits_status_change_with_actor() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
     token_admin.mint(&client.address, &1000);
 
     let escrow_id = client.create_escrow(
@@ -1091,7 +1094,7 @@ fn test_bump_escrow_extends_ttl_to_maximum() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1124,7 +1127,7 @@ fn test_bump_escrow_rejects_missing_escrow() {
     let admin = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let result = client.try_bump_escrow(&999u64);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
@@ -1140,7 +1143,7 @@ fn test_resolve_dispute_fails_if_not_disputed() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id =
         client.create_escrow(&buyer, &seller, &token, &1000, &None, &Some(arbiter), &None);
@@ -1155,7 +1158,7 @@ fn test_resolve_dispute_fails_for_nonexistent_escrow() {
     let admin = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let result = client.try_resolve_dispute(&999u64, &0u32);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
@@ -1181,7 +1184,7 @@ fn test_native_xlm_escrow_funding_and_release() {
     let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Mint native XLM to the buyer (simulating buyer having XLM balance)
     // Amount is in stroops: 10 XLM = 100_000_000 stroops
@@ -1240,7 +1243,7 @@ fn test_native_xlm_dispute_resolution_refund() {
     let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Mint native XLM to the contract (simulating funded escrow)
     let escrow_amount: i128 = 50_000_000; // 5 XLM in stroops
@@ -1298,7 +1301,7 @@ fn test_native_xlm_dispute_resolution_release() {
     let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Mint native XLM to the contract (simulating funded escrow)
     let escrow_amount: i128 = 75_000_000; // 7.5 XLM in stroops
@@ -1357,7 +1360,7 @@ fn test_multi_item_escrow_creation_and_release() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Create items for a multi-product purchase
     let mut items = Vec::new(&env);
@@ -1449,7 +1452,7 @@ fn test_release_item_already_released_fails() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let mut items = Vec::new(&env);
     items.push_back(EscrowItem {
@@ -1495,7 +1498,7 @@ fn test_release_item_invalid_index_fails() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let mut items = Vec::new(&env);
     items.push_back(EscrowItem {
@@ -1531,7 +1534,7 @@ fn test_item_amounts_must_sum_to_total() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Items that don't sum to total amount
     let mut items = Vec::new(&env);
@@ -1569,7 +1572,7 @@ fn test_too_many_items_rejected() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Create more than MAX_ITEMS_PER_ESCROW items
     let mut items = Vec::new(&env);
@@ -1606,7 +1609,7 @@ fn test_escrow_without_items_uses_full_release() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     // Fund the contract so it can pay out
     token_admin.mint(&client.address, &1000);
@@ -1653,7 +1656,7 @@ fn test_contract_balance_invariant() {
     let client = ContractClient::new(&env, &contract_id);
 
     // Fee collector is admin, fee is 5%
-    client.initialize(&admin, &admin, &500);
+    client.initialize(&admin, &admin, &500, &0, &0);
 
     token_admin.mint(&buyer, &10000);
 
@@ -1726,7 +1729,7 @@ fn test_upgrade_auth_failure() {
     let client = ContractClient::new(&env, &contract_id);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250);
+    client.initialize(&admin, &collector, &250, &0, &0);
 
     let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0; 32]);
     let result = client
@@ -1757,7 +1760,7 @@ fn test_upgrade_state_persistence() {
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &admin, &500);
+    client.initialize(&admin, &admin, &500, &0, &0);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1792,7 +1795,7 @@ fn test_cancel_unfunded_fails_before_expiry() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -1810,7 +1813,7 @@ fn test_cancel_unfunded_removes_escrow_after_expiry() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -1832,7 +1835,7 @@ fn test_cancel_unfunded_fails_for_nonexistent_escrow() {
     let collector = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &0);
+    client.initialize(&admin, &collector, &0, &0, &0);
 
     let result = client.try_cancel_unfunded(&9999u64);
     assert_eq!(result, Err(Ok(ContractError::EscrowNotFound)));
@@ -1849,7 +1852,7 @@ fn test_cancel_unfunded_fails_if_already_funded() {
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     token_admin.mint(&buyer, &1000);
 
@@ -1888,7 +1891,7 @@ fn test_cancel_unfunded_allows_escrow_recreation() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    client.initialize(&admin, &admin, &0, &0, &0);
 
     let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
 
@@ -1903,196 +1906,405 @@ fn test_cancel_unfunded_allows_escrow_recreation() {
     assert!(client.get_escrow(&new_id).is_some());
 }
 
-// =============================================================================
-// Rental / Subscription Escrow Tests (#178)
-// =============================================================================
-
-use crate::types::RentalStatus;
-
-fn setup_rental<'a>() -> (Env, ContractClient<'a>, Address, Address, Address, Address) {
+#[test]
+fn test_fee_caps_min_fee() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let tenant = Address::generate(&env);
-    let landlord = Address::generate(&env);
-
-    env.mock_all_auths();
-    client.initialize(&admin, &admin, &0);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
 
     let token_id = env.register_stellar_asset_contract_v2(admin.clone());
     let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
-    token_admin.mint(&tenant, &1_000_000_000);
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
-    (env, client, tenant, landlord, token_id.address(), admin)
+    env.mock_all_auths();
+    // 5% fee, min 100, max 1000
+    client.initialize(&admin, &collector, &500, &100, &1000);
+
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+    );
+
+    client.release_escrow(&escrow_id);
+
+    // Normal fee = 1000 * 5% = 50. Min fee is 100.
+    // Seller should get 1000 - 100 = 900.
+    assert_eq!(token.balance(&seller), 900);
+    assert_eq!(token.balance(&collector), 100);
 }
 
 #[test]
-fn test_create_rental_success() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_fee_caps_max_fee() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    let rental = client.get_rental(&rental_id).unwrap();
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
-    assert_eq!(rental.tenant, tenant);
-    assert_eq!(rental.landlord, landlord);
-    assert_eq!(rental.deposit_amount, 500_000);
-    assert_eq!(rental.recurring_amount, 100_000);
-    assert_eq!(rental.payments_remaining, 3);
-    assert_eq!(rental.status, RentalStatus::Active);
-    assert!(!rental.deposit_settled);
-    assert_eq!(rental.next_payment_due, 0); // not funded yet
+    env.mock_all_auths();
+    // 5% fee, min 100, max 1000
+    client.initialize(&admin, &collector, &500, &100, &1000);
+
+    token_admin.mint(&client.address, &50000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &50000,
+        &None,
+        &None,
+        &None,
+    );
+
+    client.release_escrow(&escrow_id);
+
+    // Normal fee = 50000 * 5% = 2500. Max fee is 1000.
+    // Seller should get 50000 - 1000 = 49000.
+    assert_eq!(token.balance(&seller), 49000);
+    assert_eq!(token.balance(&collector), 1000);
 }
 
 #[test]
-fn test_create_rental_invalid_amount() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_fee_caps_no_cap() {
+fn test_withdrawal_pattern_for_fees() {
+// =========================
+// FEE EXEMPTION WHITELIST TESTS
+// =========================
 
-    let result = client.try_create_rental(&tenant, &landlord, &token, &0, &100_000, &100, &3);
-    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+#[test]
+fn test_add_and_check_fee_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let partner = Address::generate(&env);
 
-    let result = client.try_create_rental(&tenant, &landlord, &token, &500_000, &0, &100, &3);
-    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
 
-    let result = client.try_create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &0);
-    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowAmount)));
+    assert!(!client.is_fee_exempt(&partner));
+
+    client.add_fee_whitelist(&partner);
+    assert!(client.is_fee_exempt(&partner));
 }
 
 #[test]
-fn test_fund_rental_deposit() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_remove_fee_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let partner = Address::generate(&env);
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    client.fund_rental_deposit(&rental_id);
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
 
-    let rental = client.get_rental(&rental_id).unwrap();
-    assert!(rental.next_payment_due > 0);
-    assert_eq!(rental.status, RentalStatus::Active);
+    client.add_fee_whitelist(&partner);
+    assert!(client.is_fee_exempt(&partner));
+
+    client.remove_fee_whitelist(&partner);
+    assert!(!client.is_fee_exempt(&partner));
 }
 
 #[test]
-fn test_fund_rental_deposit_twice_fails() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+#[should_panic]
+fn test_non_admin_cannot_add_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let partner = Address::generate(&env);
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    client.fund_rental_deposit(&rental_id);
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &admin, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &admin, &250);
 
-    let result = client.try_fund_rental_deposit(&rental_id);
-    assert_eq!(result, Err(Ok(ContractError::PaymentNotDue)));
+    // non_admin tries to whitelist — should trap
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "add_fee_whitelist",
+                args: (&partner,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .add_fee_whitelist(&partner);
 }
 
 #[test]
-fn test_pay_rent_full_lifecycle_returns_deposit() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_whitelisted_buyer_pays_no_fee() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let deposit = 500_000i128;
-    let rent = 100_000i128;
-    let interval = 100u32;
-    let payments = 3u32;
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &deposit, &rent, &interval, &payments);
-    client.fund_rental_deposit(&rental_id);
+    env.mock_all_auths();
+    // 5% fee, min 100, max 1000
+    client.initialize(&admin, &collector, &500, &100, &1000);
 
-    env.ledger().with_mut(|li| li.sequence_number += interval);
-    client.pay_rent(&rental_id);
-    assert_eq!(client.get_rental(&rental_id).unwrap().payments_remaining, 2);
+    token_admin.mint(&client.address, &10000);
 
-    env.ledger().with_mut(|li| li.sequence_number += interval);
-    client.pay_rent(&rental_id);
-    assert_eq!(client.get_rental(&rental_id).unwrap().payments_remaining, 1);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &10000,
+        &None,
+        &None,
+        &None,
+    );
 
-    // Final payment — deposit auto-returned
-    env.ledger().with_mut(|li| li.sequence_number += interval);
-    client.pay_rent(&rental_id);
+    client.release_escrow(&escrow_id);
 
-    let rental = client.get_rental(&rental_id).unwrap();
-    assert_eq!(rental.payments_remaining, 0);
-    assert_eq!(rental.status, RentalStatus::Completed);
-    assert!(rental.deposit_settled);
+    // Normal fee = 10000 * 5% = 500. Within [100, 1000].
+    // Seller should get 10000 - 500 = 9500.
+    assert_eq!(token.balance(&seller), 9500);
+    assert_eq!(token.balance(&collector), 500);
 }
 
 #[test]
-fn test_pay_rent_before_due_fails() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_set_fee_caps() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    client.fund_rental_deposit(&rental_id);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &500, &0, &0);
 
-    // Do NOT advance ledger — payment not yet due
-    let result = client.try_pay_rent(&rental_id);
-    assert_eq!(result, Err(Ok(ContractError::PaymentNotDue)));
+    client.set_fee_caps(&200, &2000);
+
+    assert_eq!(client.get_min_fee(), 200);
+    assert_eq!(client.get_max_fee(), 2000);
 }
 
 #[test]
-fn test_landlord_can_return_deposit_early() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_fee_caps_exceed_amount() {
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    client.fund_rental_deposit(&rental_id);
+    let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let xlm_address = xlm_sac.address();
+    let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
+    let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
 
-    client.return_deposit(&rental_id);
+    env.mock_all_auths();
+    // 250 bps = 2.5% fee
+    client.initialize(&admin, &admin, &250);
 
-    let rental = client.get_rental(&rental_id).unwrap();
-    assert_eq!(rental.status, RentalStatus::Completed);
-    assert!(rental.deposit_settled);
+    let amount: i128 = 10_000;
+    xlm_admin.mint(&buyer, &amount);
+
+    // Whitelist the buyer
+    client.add_fee_whitelist(&buyer);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    // Seller receives full amount (no fee deducted)
+    assert_eq!(xlm_token.balance(&seller), amount);
+    // Fee collector (admin) received nothing
+    assert_eq!(xlm_token.balance(&admin), 0);
 }
 
 #[test]
-fn test_return_deposit_twice_fails() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_non_whitelisted_buyer_pays_fee() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &100, &3);
-    client.fund_rental_deposit(&rental_id);
-    client.return_deposit(&rental_id);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
-    let result = client.try_return_deposit(&rental_id);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotActive)));
+    env.mock_all_auths();
+    // min fee 1000, but escrow only has 500
+    client.initialize(&admin, &collector, &500, &1000, &2000);
+
+    token_admin.mint(&client.address, &500);
+    // Initialize with 2.5% fee (250 bps)
+    client.initialize(&admin, &collector, &250);
+
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &500,
+        &1000,
+        &None,
+        &None,
+        &None,
+    );
+
+    client.release_escrow(&escrow_id);
+
+    // Fee capped at 500 (full escrow amount)
+    assert_eq!(token.balance(&seller), 0);
+    assert_eq!(token.balance(&collector), 500);
+    // Release escrow
+    client.release_escrow(&escrow_id);
+
+    // Fee should be 1000 * 250 / 10000 = 25
+    // Seller should get 1000 - 25 = 975
+    assert_eq!(token.balance(&seller), 975);
+    
+    // Collector should NOT have received the fee yet (on-chain balance 0)
+    assert_eq!(token.balance(&collector), 0);
+    
+    // Fee should be in pending storage
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 25);
+
+    // Withdraw fees
+    client.withdraw_fees(&collector, &token_id.address());
+
+    // Now collector should have the fee
+    assert_eq!(token.balance(&collector), 25);
+    
+    // Pending fee should be 0
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
+
+    let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let xlm_address = xlm_sac.address();
+    let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
+    let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
+
+    env.mock_all_auths();
+    // 250 bps = 2.5% fee
+    client.initialize(&admin, &admin, &250);
+
+    let amount: i128 = 10_000;
+    xlm_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    let expected_fee: i128 = amount * 250 / 10_000; // 250
+    let expected_seller: i128 = amount - expected_fee; // 9_750
+
+    assert_eq!(xlm_token.balance(&seller), expected_seller);
+    assert_eq!(xlm_token.balance(&admin), expected_fee);
 }
 
 #[test]
-fn test_claim_deposit_on_default() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_special_native_fee() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let interval = 100u32;
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &interval, &3);
-    client.fund_rental_deposit(&rental_id);
+    let native_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let other_id = env.register_stellar_asset_contract_v2(admin.clone());
 
-    // Advance past due date + full grace interval (default threshold)
-    env.ledger().with_mut(|li| li.sequence_number += interval * 2 + 1);
+    env.mock_all_auths();
+    // Standard fee 5% (500 bps), no caps
+    client.initialize(&admin, &collector, &500, &0, &0);
 
-    client.claim_deposit_on_default(&rental_id);
+    // Set special fee for native token: 1% (100 bps)
+    client.set_native_fee(&native_id.address(), &100);
 
-    let rental = client.get_rental(&rental_id).unwrap();
-    assert_eq!(rental.status, RentalStatus::Defaulted);
-    assert!(rental.deposit_settled);
+    // 1. Check with non-native token (should be 5%)
+    let other_token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &other_id.address());
+    other_token_admin.mint(&client.address, &10000);
+
+    let buyer1 = Address::generate(&env);
+    let escrow_id_other = client.create_escrow(
+        &buyer1,
+        &seller,
+        &other_id.address(),
+        &10000,
+        &None,
+        &None,
+        &None,
+    );
+    client.release_escrow(&escrow_id_other);
+    assert_eq!(soroban_sdk::token::Client::new(&env, &other_id.address()).balance(&collector), 500);
+
+    // 2. Check with native token (should be 1%)
+    let native_token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &native_id.address());
+    native_token_admin.mint(&client.address, &10000);
+
+    let buyer2 = Address::generate(&env);
+    let escrow_id_native = client.create_escrow(
+        &buyer2,
+        &seller,
+        &native_id.address(),
+        &10000,
+        &None,
+        &None,
+        &None,
+    );
+    client.release_escrow(&escrow_id_native);
+    assert_eq!(soroban_sdk::token::Client::new(&env, &native_id.address()).balance(&collector), 100);
 }
 
 #[test]
-fn test_claim_deposit_before_default_threshold_fails() {
-    let (env, client, tenant, landlord, token, _admin) = setup_rental();
+fn test_create_bulk_escrows() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller1 = Address::generate(&env);
+    let seller2 = Address::generate(&env);
+    let collector = Address::generate(&env);
 
-    let interval = 100u32;
-    let rental_id = client.create_rental(&tenant, &landlord, &token, &500_000, &100_000, &interval, &3);
-    client.fund_rental_deposit(&rental_id);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
 
-    // Only advance to the due date, not past the grace window
-    env.ledger().with_mut(|li| li.sequence_number += interval);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &500, &0, &0);
 
-    let result = client.try_claim_deposit_on_default(&rental_id);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotDefaulted)));
-}
+    let mut requests = Vec::new(&env);
+    requests.push_back(BulkEscrowRequest {
+        seller: seller1.clone(),
+        amount: 1000,
+        metadata: None,
+        arbiter: None,
+        items: None,
+    });
+    requests.push_back(BulkEscrowRequest {
+        seller: seller2.clone(),
+        amount: 2000,
+        metadata: None,
+        arbiter: None,
+        items: None,
+    });
 
-#[test]
-fn test_rental_not_found() {
-    let (_env, client, ..) = setup_rental();
+    let ids = client.create_bulk_escrows(&buyer, &token_id.address(), &requests);
 
-    let result = client.try_fund_rental_deposit(&999);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+    assert_eq!(ids.len(), 2);
+    
+    let escrow1 = client.get_escrow(&ids.get(0).unwrap()).unwrap();
+    let escrow2 = client.get_escrow(&ids.get(1).unwrap()).unwrap();
 
-    let result = client.try_pay_rent(&999);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
-
-    let result = client.try_return_deposit(&999);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
-
-    let result = client.try_claim_deposit_on_default(&999);
-    assert_eq!(result, Err(Ok(ContractError::RentalNotFound)));
+    assert_eq!(escrow1.seller, seller1);
+    assert_eq!(escrow2.seller, seller2);
+    assert_eq!(escrow1.amount, 1000);
+    assert_eq!(escrow1.amount, 1000);
+    assert_eq!(escrow2.amount, 2000);
 }

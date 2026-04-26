@@ -7,6 +7,7 @@ pub enum ContractError {
     NotAdmin = 1,
     Unauthorized = 2,
     NotProposedAdmin = 3,
+    NotOracle = 4,
     EscrowNotFound = 10,
     InvalidEscrowState = 11,
     InvalidEscrowAmount = 13,

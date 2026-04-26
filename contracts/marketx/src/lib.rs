@@ -99,12 +99,11 @@ use soroban_sdk::xdr::ToXdr;
 pub use errors::ContractError;
 pub use types::{
     AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
-    FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
-    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
-    FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
-    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
-    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
+    DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
+    EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeExemptionEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+    UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -454,6 +453,7 @@ impl Contract {
         metadata: Option<Bytes>,
         arbiter: Option<Address>,
         items: Option<Vec<EscrowItem>>,
+        tracking_id: Option<Bytes>,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
@@ -498,6 +498,7 @@ impl Contract {
             cancellation_proposer: None,
             items: escrow_items,
             created_at: env.ledger().sequence(),
+            tracking_id,
         };
 
         env.storage()
@@ -518,6 +519,7 @@ impl Contract {
             amount,
             status: EscrowStatus::Pending,
             arbiter,
+            tracking_id,
         };
         event.publish(&env);
 
@@ -598,6 +600,100 @@ impl Contract {
             .persistent()
             .get(&DataKey::TotalReleasedAmount)
             .unwrap_or(0)
+    }
+
+    pub fn set_oracle(env: Env, oracle: Address) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage().persistent().set(&DataKey::Oracle, &oracle);
+        Ok(())
+    }
+
+    pub fn get_oracle(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::Oracle)
+    }
+
+    pub fn verify_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let oracle: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Oracle)
+            .ok_or(ContractError::NotOracle)?;
+
+        oracle.require_auth();
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let tracking_id = escrow.tracking_id.clone().ok_or(ContractError::Unauthorized)?;
+
+        // Oracle verified delivery, release funds
+        let from_status = escrow.status.clone();
+        
+        // Use Oracle as actor for status change
+        let actor = oracle.clone();
+        
+        // Core release logic (duplicated from release_escrow for now to avoid complex refactor in this turn, or I can refactor it)
+        // Actually, let's try to keep it simple.
+        
+        let mut fee_bps: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeBps)
+            .unwrap_or(0);
+
+        if let Some(native_asset) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::NativeAsset)
+        {
+            if escrow.token == native_asset {
+                fee_bps = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::NativeFeeBps)
+                    .unwrap_or(fee_bps);
+            }
+        }
+
+        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+        let min_fee: i128 = env.storage().persistent().get(&DataKey::MinFee).unwrap_or(0);
+        let max_fee: i128 = env.storage().persistent().get(&DataKey::MaxFee).unwrap_or(0);
+
+        if fee < min_fee { fee = min_fee; }
+        if max_fee > 0 && fee > max_fee { fee = max_fee; }
+        if fee > escrow.amount { fee = escrow.amount; }
+
+        let seller_amount = escrow.amount - fee;
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        token_client.transfer(&env.current_contract_address(), &escrow.seller, &seller_amount);
+
+        if fee > 0 {
+            let fee_collector: Address = env.storage().persistent().get(&DataKey::FeeCollector).ok_or(ContractError::InvalidFeeConfig)?;
+            Self::add_pending_fee(&env, fee_collector.clone(), escrow.token.clone(), fee);
+            Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
+            FeeCollectedEvent { escrow_id, fee_collector, fee }.publish(&env);
+        }
+
+        escrow.status = EscrowStatus::Released;
+        escrow.cancellation_proposer = None;
+        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &escrow);
+
+        FundsReleasedEvent { escrow_id, amount: escrow.amount, fee }.publish(&env);
+        DeliveryVerifiedEvent { escrow_id, tracking_id }.publish(&env);
+        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+
+        Self::add_i128(&env, DataKey::TotalReleasedAmount, escrow.amount);
+
+        Ok(())
     }
 
     pub fn get_total_refunded_amount(env: Env) -> i128 {

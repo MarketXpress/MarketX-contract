@@ -61,6 +61,7 @@ pub enum DataKey {
     TotalReleasedAmount,
     PendingFee(Address, Address),
     FeeWhitelist(Address),
+    Oracle,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -98,6 +99,8 @@ pub struct Escrow {
     /// Ledger sequence number at which this escrow was created.
     /// Used to enforce the unfunded expiry window.
     pub created_at: u32,
+    /// Optional shipping tracking ID for oracle verification.
+    pub tracking_id: Option<Bytes>,
 }
 
 /// Number of ledgers after creation within which an escrow must be funded.
@@ -134,6 +137,7 @@ pub struct EscrowCreatedEvent {
     pub amount: i128,
     pub status: EscrowStatus,
     pub arbiter: Option<Address>,
+    pub tracking_id: Option<Bytes>,
 }
 
 #[contractevent(topics = ["funds_released"], data_format = "vec")]
@@ -143,6 +147,14 @@ pub struct FundsReleasedEvent {
     pub escrow_id: u64,
     pub amount: i128,
     pub fee: i128,
+}
+
+#[contractevent(topics = ["delivery_verified"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeliveryVerifiedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub tracking_id: Bytes,
 }
 
 #[contractevent(topics = ["fee_collected"], data_format = "vec")]

@@ -59,6 +59,8 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
+    PendingFee(Address, Address),
+    FeeWhitelist(Address),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -150,6 +152,16 @@ pub struct FeeCollectedEvent {
     pub escrow_id: u64,
     pub fee_collector: Address,
     pub fee: i128,
+}
+
+#[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeesWithdrawnEvent {
+    #[topic]
+    pub collector: Address,
+    #[topic]
+    pub token: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["status_change"], data_format = "vec")]
@@ -252,4 +264,12 @@ pub struct CounterEvidenceSubmittedEvent {
     pub escrow_id: u64,
     pub responder: Address,
     pub counter_evidence_hash: Option<Bytes>,
+}
+
+#[contractevent(topics = ["fee_exemption"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeExemptionEvent {
+    pub address: Address,
+    pub exempted: bool,
+    pub actor: Address,
 }

@@ -1977,6 +1977,78 @@ fn test_fee_caps_max_fee() {
 
 #[test]
 fn test_fee_caps_no_cap() {
+fn test_withdrawal_pattern_for_fees() {
+// =========================
+// FEE EXEMPTION WHITELIST TESTS
+// =========================
+
+#[test]
+fn test_add_and_check_fee_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let partner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    assert!(!client.is_fee_exempt(&partner));
+
+    client.add_fee_whitelist(&partner);
+    assert!(client.is_fee_exempt(&partner));
+}
+
+#[test]
+fn test_remove_fee_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let partner = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250);
+
+    client.add_fee_whitelist(&partner);
+    assert!(client.is_fee_exempt(&partner));
+
+    client.remove_fee_whitelist(&partner);
+    assert!(!client.is_fee_exempt(&partner));
+}
+
+#[test]
+#[should_panic]
+fn test_non_admin_cannot_add_whitelist() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let partner = Address::generate(&env);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "initialize",
+                args: (&admin, &admin, 250u32).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .initialize(&admin, &admin, &250);
+
+    // non_admin tries to whitelist — should trap
+    client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "add_fee_whitelist",
+                args: (&partner,).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .add_fee_whitelist(&partner);
+}
+
+#[test]
+fn test_whitelisted_buyer_pays_no_fee() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
@@ -2028,6 +2100,34 @@ fn test_set_fee_caps() {
 
 #[test]
 fn test_fee_caps_exceed_amount() {
+
+    let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let xlm_address = xlm_sac.address();
+    let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
+    let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
+
+    env.mock_all_auths();
+    // 250 bps = 2.5% fee
+    client.initialize(&admin, &admin, &250);
+
+    let amount: i128 = 10_000;
+    xlm_admin.mint(&buyer, &amount);
+
+    // Whitelist the buyer
+    client.add_fee_whitelist(&buyer);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    // Seller receives full amount (no fee deducted)
+    assert_eq!(xlm_token.balance(&seller), amount);
+    // Fee collector (admin) received nothing
+    assert_eq!(xlm_token.balance(&admin), 0);
+}
+
+#[test]
+fn test_non_whitelisted_buyer_pays_fee() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
@@ -2043,12 +2143,17 @@ fn test_fee_caps_exceed_amount() {
     client.initialize(&admin, &collector, &500, &1000, &2000);
 
     token_admin.mint(&client.address, &500);
+    // Initialize with 2.5% fee (250 bps)
+    client.initialize(&admin, &collector, &250);
+
+    token_admin.mint(&client.address, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,
         &token_id.address(),
         &500,
+        &1000,
         &None,
         &None,
         &None,
@@ -2059,6 +2164,49 @@ fn test_fee_caps_exceed_amount() {
     // Fee capped at 500 (full escrow amount)
     assert_eq!(token.balance(&seller), 0);
     assert_eq!(token.balance(&collector), 500);
+    // Release escrow
+    client.release_escrow(&escrow_id);
+
+    // Fee should be 1000 * 250 / 10000 = 25
+    // Seller should get 1000 - 25 = 975
+    assert_eq!(token.balance(&seller), 975);
+    
+    // Collector should NOT have received the fee yet (on-chain balance 0)
+    assert_eq!(token.balance(&collector), 0);
+    
+    // Fee should be in pending storage
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 25);
+
+    // Withdraw fees
+    client.withdraw_fees(&collector, &token_id.address());
+
+    // Now collector should have the fee
+    assert_eq!(token.balance(&collector), 25);
+    
+    // Pending fee should be 0
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
+
+    let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let xlm_address = xlm_sac.address();
+    let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
+    let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
+
+    env.mock_all_auths();
+    // 250 bps = 2.5% fee
+    client.initialize(&admin, &admin, &250);
+
+    let amount: i128 = 10_000;
+    xlm_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    let expected_fee: i128 = amount * 250 / 10_000; // 250
+    let expected_seller: i128 = amount - expected_fee; // 9_750
+
+    assert_eq!(xlm_token.balance(&seller), expected_seller);
+    assert_eq!(xlm_token.balance(&admin), expected_fee);
 }
 
 #[test]

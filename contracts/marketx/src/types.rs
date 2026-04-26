@@ -62,6 +62,14 @@ pub enum DataKey {
     PendingFee(Address, Address),
     FeeWhitelist(Address),
     Oracle,
+    MetadataVisibility(u64),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataVisibility {
+    Private,
+    Public,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -294,6 +302,8 @@ pub struct BulkEscrowCreatedEvent {
     pub buyer: Address,
     pub token: Address,
     pub escrow_ids: Vec<u64>,
+}
+
 #[contractevent(topics = ["fee_exemption"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeExemptionEvent {

@@ -99,15 +99,10 @@ use soroban_sdk::xdr::ToXdr;
 pub use errors::ContractError;
 pub use types::{
     AdminTransferredEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, CancellationProposedEvent,
-    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowExpiredEvent,
-    EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
-    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
-    EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeExemptionEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    CounterEvidenceSubmittedEvent, DataKey, DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent,
+    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent,
+    FeeCollectedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
+    MetadataVisibility, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
     RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
 };
@@ -455,7 +450,7 @@ impl Contract {
             cancellation_proposer: None,
             items: escrow_items,
             created_at: env.ledger().sequence(),
-            tracking_id,
+            tracking_id: tracking_id.clone(),
         };
 
         env.storage()
@@ -538,11 +533,12 @@ impl Contract {
         metadata: Option<Bytes>,
         arbiter: Option<Address>,
         items: Option<Vec<EscrowItem>>,
+        tracking_id: Option<Bytes>,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
 
-        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items)
+        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items, tracking_id)
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
@@ -567,6 +563,7 @@ impl Contract {
                 request.metadata.clone(),
                 request.arbiter.clone(),
                 request.items.clone(),
+                None,
             )?;
             ids.push_back(id);
         }
@@ -871,14 +868,13 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
-        let mut fee_bps: u32 = env
         // Whitelisted buyers (partners/internal) pay zero fees.
         let is_exempt: bool = env
             .storage()
             .persistent()
             .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
             .unwrap_or(false);
-        let fee_bps: u32 = env
+        let mut fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
@@ -899,7 +895,11 @@ impl Contract {
             }
         }
 
-        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+        let mut fee: i128 = if is_exempt {
+            0
+        } else {
+            escrow.amount * (fee_bps as i128) / 10_000
+        };
 
         let min_fee: i128 = env
             .storage()
@@ -912,22 +912,18 @@ impl Contract {
             .get(&DataKey::MaxFee)
             .unwrap_or(0);
 
-        if fee < min_fee {
-            fee = min_fee;
+        if !is_exempt {
+            if fee < min_fee {
+                fee = min_fee;
+            }
+            if max_fee > 0 && fee > max_fee {
+                fee = max_fee;
+            }
+            // Ensure fee doesn't exceed the escrow amount
+            if fee > escrow.amount {
+                fee = escrow.amount;
+            }
         }
-        if max_fee > 0 && fee > max_fee {
-            fee = max_fee;
-        }
-
-        // Ensure fee doesn't exceed the escrow amount
-        if fee > escrow.amount {
-            fee = escrow.amount;
-        }
-        let fee: i128 = if is_exempt {
-            0
-        } else {
-            escrow.amount * (fee_bps as i128) / 10_000
-        };
         let seller_amount = escrow.amount - fee;
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -1613,6 +1609,8 @@ impl Contract {
             .persistent()
             .get(&DataKey::MaxFee)
             .unwrap_or(0)
+    }
+
     /// Add an address to the fee exemption whitelist. Admin only.
     pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
         let admin = Self::assert_admin(&env)?;

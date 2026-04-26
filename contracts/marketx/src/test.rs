@@ -10,7 +10,10 @@ use soroban_sdk::{
 use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
 use crate::types::{EscrowItem, MAX_METADATA_SIZE};
-use crate::{Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent, StatusChangeEvent};
+use crate::{
+    BulkEscrowCreatedEvent, BulkEscrowRequest, Contract, ContractClient, EscrowCreatedEvent,
+    FundsReleasedEvent, StatusChangeEvent,
+};
 
 fn setup<'a>() -> (Env, ContractClient<'a>) {
     let env = Env::default();
@@ -2112,4 +2115,48 @@ fn test_special_native_fee() {
     );
     client.release_escrow(&escrow_id_native);
     assert_eq!(soroban_sdk::token::Client::new(&env, &native_id.address()).balance(&collector), 100);
+}
+
+#[test]
+fn test_create_bulk_escrows() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller1 = Address::generate(&env);
+    let seller2 = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &500, &0, &0);
+
+    let mut requests = Vec::new(&env);
+    requests.push_back(BulkEscrowRequest {
+        seller: seller1.clone(),
+        amount: 1000,
+        metadata: None,
+        arbiter: None,
+        items: None,
+    });
+    requests.push_back(BulkEscrowRequest {
+        seller: seller2.clone(),
+        amount: 2000,
+        metadata: None,
+        arbiter: None,
+        items: None,
+    });
+
+    let ids = client.create_bulk_escrows(&buyer, &token_id.address(), &requests);
+
+    assert_eq!(ids.len(), 2);
+    
+    let escrow1 = client.get_escrow(&ids.get(0).unwrap()).unwrap();
+    let escrow2 = client.get_escrow(&ids.get(1).unwrap()).unwrap();
+
+    assert_eq!(escrow1.seller, seller1);
+    assert_eq!(escrow2.seller, seller2);
+    assert_eq!(escrow1.amount, 1000);
+    assert_eq!(escrow1.amount, 1000);
+    assert_eq!(escrow2.amount, 2000);
 }

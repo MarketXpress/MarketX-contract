@@ -253,3 +253,21 @@ pub struct CounterEvidenceSubmittedEvent {
     pub responder: Address,
     pub counter_evidence_hash: Option<Bytes>,
 }
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowRequest {
+    pub seller: Address,
+    pub amount: i128,
+    pub metadata: Option<Bytes>,
+    pub arbiter: Option<Address>,
+    pub items: Option<Vec<EscrowItem>>,
+}
+
+#[contractevent(topics = ["bulk_escrow_created"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BulkEscrowCreatedEvent {
+    pub buyer: Address,
+    pub token: Address,
+    pub escrow_ids: Vec<u64>,
+}

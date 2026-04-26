@@ -98,15 +98,11 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
-    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    CancellationProposedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
+    FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
+    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -652,12 +648,22 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
+        // Whitelisted buyers (partners/internal) pay zero fees.
+        let is_exempt: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
+            .unwrap_or(false);
         let fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
             .unwrap_or(0);
-        let fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+        let fee: i128 = if is_exempt {
+            0
+        } else {
+            escrow.amount * (fee_bps as i128) / 10_000
+        };
         let seller_amount = escrow.amount - fee;
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -1261,6 +1267,34 @@ impl Contract {
             .persistent()
             .get(&DataKey::FeeBps)
             .unwrap_or(0)
+    }
+
+    /// Add an address to the fee exemption whitelist. Admin only.
+    pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeWhitelist(address.clone()), &true);
+        FeeExemptionEvent { address, exempted: true, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Remove an address from the fee exemption whitelist. Admin only.
+    pub fn remove_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FeeWhitelist(address.clone()));
+        FeeExemptionEvent { address, exempted: false, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Check whether an address is fee-exempt.
+    pub fn is_fee_exempt(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(address))
+            .unwrap_or(false)
     }
 
     /// Get a refund request by ID.

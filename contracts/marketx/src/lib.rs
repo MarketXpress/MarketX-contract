@@ -98,6 +98,12 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
+    AdminTransferredEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, CancellationProposedEvent,
+    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowExpiredEvent,
+    EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
+    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+    UNFUNDED_EXPIRY_LEDGERS,
     AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
     Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
     FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
@@ -399,53 +405,7 @@ impl Contract {
     // 💰 ESCROW ACTIONS
     // =========================
 
-    /// Create a new escrow with optional metadata and multiple items.
-    ///
-    /// # Arguments
-    /// * `buyer` - The buyer's address
-    /// * `seller` - The seller's address
-    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
-    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
-    /// * `metadata` - Optional metadata (max 1KB)
-    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
-    ///               If provided, only this address may call `resolve_dispute` for this escrow.
-    /// * `items` - Optional array of items/milestones. If provided, each item can be released
-    ///             independently using `release_item`. The sum of item amounts must equal
-    ///             the total escrow amount.
-    ///
-    /// # Native XLM Support
-    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
-    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
-    /// making it fully compatible with all escrow operations.
-    ///
-    /// # Example - Native XLM Escrow with Items
-    /// ```ignore
-    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
-    /// let amount: i128 = 100_000_000; // 10 XLM
-    /// let xlm_address = /* native XLM SAC address */;
-    ///
-    /// // Create items for a multi-product purchase
-    /// let items = vec![
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
-    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
-    /// ];
-    ///
-    /// let escrow_id = client.create_escrow(
-    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
-    /// );
-    ///
-    /// // Later, release individual items as they're delivered
-    /// client.release_item(&escrow_id, &0); // Release product 1
-    /// client.release_item(&escrow_id, &1); // Release product 2
-    /// ```
-    ///
-    /// # Errors
-    /// * `MetadataTooLarge` - If metadata exceeds 1KB
-    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
-    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
-    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
-    pub fn create_escrow(
+    fn create_escrow_internal(
         env: Env,
         buyer: Address,
         seller: Address,
@@ -455,9 +415,6 @@ impl Contract {
         arbiter: Option<Address>,
         items: Option<Vec<EscrowItem>>,
     ) -> Result<u64, ContractError> {
-        Self::assert_not_paused(&env)?;
-        buyer.require_auth();
-
         Self::validate_metadata(&metadata)?;
 
         if amount <= 0 {
@@ -522,6 +479,104 @@ impl Contract {
         event.publish(&env);
 
         Ok(escrow_id)
+    }
+
+    /// Create a new escrow with optional metadata and multiple items.
+    ///
+    /// # Arguments
+    /// * `buyer` - The buyer's address
+    /// * `seller` - The seller's address
+    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
+    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
+    /// * `metadata` - Optional metadata (max 1KB)
+    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
+    ///               If provided, only this address may call `resolve_dispute` for this escrow.
+    /// * `items` - Optional array of items/milestones. If provided, each item can be released
+    ///             independently using `release_item`. The sum of item amounts must equal
+    ///             the total escrow amount.
+    ///
+    /// # Native XLM Support
+    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
+    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
+    /// making it fully compatible with all escrow operations.
+    ///
+    /// # Example - Native XLM Escrow with Items
+    /// ```ignore
+    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
+    /// let amount: i128 = 100_000_000; // 10 XLM
+    /// let xlm_address = /* native XLM SAC address */;
+    ///
+    /// // Create items for a multi-product purchase
+    /// let items = vec![
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
+    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
+    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
+    /// ];
+    ///
+    /// let escrow_id = client.create_escrow(
+    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
+    /// );
+    ///
+    /// // Later, release individual items as they're delivered
+    /// client.release_item(&escrow_id, &0); // Release product 1
+    /// client.release_item(&escrow_id, &1); // Release product 2
+    /// ```
+    ///
+    /// # Errors
+    /// * `MetadataTooLarge` - If metadata exceeds 1KB
+    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
+    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
+    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
+    pub fn create_escrow(
+        env: Env,
+        buyer: Address,
+        seller: Address,
+        token: Address,
+        amount: i128,
+        metadata: Option<Bytes>,
+        arbiter: Option<Address>,
+        items: Option<Vec<EscrowItem>>,
+    ) -> Result<u64, ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items)
+    }
+
+    /// Create multiple escrows in a single transaction (Bulk Creation).
+    /// Useful for cart checkouts involving multiple sellers.
+    pub fn create_bulk_escrows(
+        env: Env,
+        buyer: Address,
+        token: Address,
+        requests: Vec<BulkEscrowRequest>,
+    ) -> Result<Vec<u64>, ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        let mut ids = Vec::new(&env);
+        for request in requests.iter() {
+            let id = Self::create_escrow_internal(
+                env.clone(),
+                buyer.clone(),
+                request.seller.clone(),
+                token.clone(),
+                request.amount,
+                request.metadata.clone(),
+                request.arbiter.clone(),
+                request.items.clone(),
+            )?;
+            ids.push_back(id);
+        }
+
+        BulkEscrowCreatedEvent {
+            buyer,
+            token,
+            escrow_ids: ids.clone(),
+        }
+        .publish(&env);
+
+        Ok(ids)
     }
 
     pub fn get_escrow(env: Env, escrow_id: u64) -> Option<Escrow> {

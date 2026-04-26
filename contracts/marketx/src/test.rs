@@ -1903,6 +1903,8 @@ fn test_cancel_unfunded_allows_escrow_recreation() {
     assert!(client.get_escrow(&new_id).is_some());
 }
 
+#[test]
+fn test_withdrawal_pattern_for_fees() {
 // =========================
 // FEE EXEMPTION WHITELIST TESTS
 // =========================
@@ -2010,6 +2012,49 @@ fn test_non_whitelisted_buyer_pays_fee() {
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    // Initialize with 2.5% fee (250 bps)
+    client.initialize(&admin, &collector, &250);
+
+    token_admin.mint(&client.address, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+    );
+
+    // Release escrow
+    client.release_escrow(&escrow_id);
+
+    // Fee should be 1000 * 250 / 10000 = 25
+    // Seller should get 1000 - 25 = 975
+    assert_eq!(token.balance(&seller), 975);
+    
+    // Collector should NOT have received the fee yet (on-chain balance 0)
+    assert_eq!(token.balance(&collector), 0);
+    
+    // Fee should be in pending storage
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 25);
+
+    // Withdraw fees
+    client.withdraw_fees(&collector, &token_id.address());
+
+    // Now collector should have the fee
+    assert_eq!(token.balance(&collector), 25);
+    
+    // Pending fee should be 0
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
 
     let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
     let xlm_address = xlm_sac.address();

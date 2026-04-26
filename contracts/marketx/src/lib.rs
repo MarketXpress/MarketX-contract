@@ -271,6 +271,15 @@ impl Contract {
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
     }
+
+    fn add_pending_fee(env: &Env, collector: Address, token: Address, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + amount));
+    }
 }
 
 #[contractimpl]
@@ -684,14 +693,17 @@ impl Contract {
                 .get(&DataKey::FeeCollector)
                 .ok_or(ContractError::InvalidFeeConfig)?;
 
-            #[allow(clippy::needless_borrows_for_generic_args)]
-            token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
+            Self::add_pending_fee(&env, fee_collector, escrow.token.clone(), fee);
 
             Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
 
             FeeCollectedEvent {
                 escrow_id,
-                fee_collector,
+                fee_collector: env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::FeeCollector)
+                    .unwrap(), // Re-fetch to satisfy borrow checker if needed, or just use the one above
                 fee,
             }
             .publish(&env);
@@ -1309,6 +1321,47 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::RefundCount)
+            .unwrap_or(0)
+    }
+
+    /// Withdraw accumulated fees for a specific token.
+    ///
+    /// This follows the pull pattern for revenue sharing, allowing collectors
+    /// to claim their fees at their convenience.
+    pub fn withdraw_fees(env: Env, collector: Address, token: Address) -> Result<(), ContractError> {
+        collector.require_auth();
+
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(ContractError::InvalidEscrowAmount)?;
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        env.storage().persistent().remove(&key);
+
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &collector, &amount);
+
+        FeesWithdrawnEvent {
+            collector,
+            token,
+            amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Get the pending fee balance for a collector and token.
+    pub fn get_pending_fee(env: Env, collector: Address, token: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingFee(collector, token))
             .unwrap_or(0)
     }
 }

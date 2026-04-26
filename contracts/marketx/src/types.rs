@@ -56,6 +56,7 @@ pub enum DataKey {
     EscrowIds,
 
     TotalReleasedAmount,
+    PendingFee(Address, Address),
     FeeWhitelist(Address),
 }
 
@@ -148,6 +149,16 @@ pub struct FeeCollectedEvent {
     pub escrow_id: u64,
     pub fee_collector: Address,
     pub fee: i128,
+}
+
+#[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeesWithdrawnEvent {
+    #[topic]
+    pub collector: Address,
+    #[topic]
+    pub token: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["status_change"], data_format = "vec")]

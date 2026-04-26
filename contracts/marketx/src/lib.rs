@@ -104,6 +104,13 @@ pub use types::{
     FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
     RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
+    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
+    FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
+    FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
+    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -271,6 +278,15 @@ impl Contract {
         Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
+    }
+
+    fn add_pending_fee(env: &Env, collector: Address, token: Address, amount: i128) {
+        if amount <= 0 {
+            return;
+        }
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        env.storage().persistent().set(&key, &(current + amount));
     }
 }
 
@@ -708,6 +724,13 @@ impl Contract {
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
         let mut fee_bps: u32 = env
+        // Whitelisted buyers (partners/internal) pay zero fees.
+        let is_exempt: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
+            .unwrap_or(false);
+        let fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
@@ -752,6 +775,11 @@ impl Contract {
         if fee > escrow.amount {
             fee = escrow.amount;
         }
+        let fee: i128 = if is_exempt {
+            0
+        } else {
+            escrow.amount * (fee_bps as i128) / 10_000
+        };
         let seller_amount = escrow.amount - fee;
 
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -772,14 +800,17 @@ impl Contract {
                 .get(&DataKey::FeeCollector)
                 .ok_or(ContractError::InvalidFeeConfig)?;
 
-            #[allow(clippy::needless_borrows_for_generic_args)]
-            token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
+            Self::add_pending_fee(&env, fee_collector, escrow.token.clone(), fee);
 
             Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
 
             FeeCollectedEvent {
                 escrow_id,
-                fee_collector,
+                fee_collector: env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::FeeCollector)
+                    .unwrap(), // Re-fetch to satisfy borrow checker if needed, or just use the one above
                 fee,
             }
             .publish(&env);
@@ -1434,6 +1465,32 @@ impl Contract {
             .persistent()
             .get(&DataKey::MaxFee)
             .unwrap_or(0)
+    /// Add an address to the fee exemption whitelist. Admin only.
+    pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeWhitelist(address.clone()), &true);
+        FeeExemptionEvent { address, exempted: true, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Remove an address from the fee exemption whitelist. Admin only.
+    pub fn remove_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::FeeWhitelist(address.clone()));
+        FeeExemptionEvent { address, exempted: false, actor: admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Check whether an address is fee-exempt.
+    pub fn is_fee_exempt(env: Env, address: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeWhitelist(address))
+            .unwrap_or(false)
     }
 
     /// Get a refund request by ID.
@@ -1448,6 +1505,47 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::RefundCount)
+            .unwrap_or(0)
+    }
+
+    /// Withdraw accumulated fees for a specific token.
+    ///
+    /// This follows the pull pattern for revenue sharing, allowing collectors
+    /// to claim their fees at their convenience.
+    pub fn withdraw_fees(env: Env, collector: Address, token: Address) -> Result<(), ContractError> {
+        collector.require_auth();
+
+        let key = DataKey::PendingFee(collector.clone(), token.clone());
+        let amount: i128 = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(ContractError::InvalidEscrowAmount)?;
+
+        if amount <= 0 {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        env.storage().persistent().remove(&key);
+
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &collector, &amount);
+
+        FeesWithdrawnEvent {
+            collector,
+            token,
+            amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Get the pending fee balance for a collector and token.
+    pub fn get_pending_fee(env: Env, collector: Address, token: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingFee(collector, token))
             .unwrap_or(0)
     }
 }

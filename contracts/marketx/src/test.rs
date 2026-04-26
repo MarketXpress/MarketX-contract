@@ -2208,3 +2208,56 @@ fn test_non_whitelisted_buyer_pays_fee() {
     assert_eq!(xlm_token.balance(&seller), expected_seller);
     assert_eq!(xlm_token.balance(&admin), expected_fee);
 }
+
+#[test]
+fn test_special_native_fee() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let native_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let other_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    // Standard fee 5% (500 bps), no caps
+    client.initialize(&admin, &collector, &500, &0, &0);
+
+    // Set special fee for native token: 1% (100 bps)
+    client.set_native_fee(&native_id.address(), &100);
+
+    // 1. Check with non-native token (should be 5%)
+    let other_token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &other_id.address());
+    other_token_admin.mint(&client.address, &10000);
+
+    let buyer1 = Address::generate(&env);
+    let escrow_id_other = client.create_escrow(
+        &buyer1,
+        &seller,
+        &other_id.address(),
+        &10000,
+        &None,
+        &None,
+        &None,
+    );
+    client.release_escrow(&escrow_id_other);
+    assert_eq!(soroban_sdk::token::Client::new(&env, &other_id.address()).balance(&collector), 500);
+
+    // 2. Check with native token (should be 1%)
+    let native_token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &native_id.address());
+    native_token_admin.mint(&client.address, &10000);
+
+    let buyer2 = Address::generate(&env);
+    let escrow_id_native = client.create_escrow(
+        &buyer2,
+        &seller,
+        &native_id.address(),
+        &10000,
+        &None,
+        &None,
+        &None,
+    );
+    client.release_escrow(&escrow_id_native);
+    assert_eq!(soroban_sdk::token::Client::new(&env, &native_id.address()).balance(&collector), 100);
+}

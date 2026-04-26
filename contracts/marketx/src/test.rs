@@ -305,7 +305,7 @@ fn test_metadata_stored_successfully() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.metadata, Some(metadata.clone()));
 
-    let retrieved_metadata = client.get_escrow_metadata(&escrow_id).unwrap();
+    let retrieved_metadata = client.get_escrow_metadata(&escrow_id, &buyer).unwrap();
     assert_eq!(retrieved_metadata, metadata);
 }
 
@@ -326,7 +326,7 @@ fn test_metadata_none_stored_successfully() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.metadata, None);
 
-    let retrieved_metadata = client.get_escrow_metadata(&escrow_id);
+    let retrieved_metadata = client.get_escrow_metadata(&escrow_id, &buyer);
     assert_eq!(retrieved_metadata, None);
 }
 
@@ -385,8 +385,8 @@ fn test_get_escrow_metadata_for_nonexistent_escrow() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250);
 
-    let metadata = client.get_escrow_metadata(&999u64);
-    assert_eq!(metadata, None);
+    let metadata = client.try_get_escrow_metadata(&999u64, &admin);
+    assert_eq!(metadata, Err(Ok(ContractError::EscrowNotFound)));
 }
 
 #[test]
@@ -1901,4 +1901,120 @@ fn test_cancel_unfunded_allows_escrow_recreation() {
     // The duplicate-prevention hash was removed, so the same escrow can be recreated
     let new_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None);
     assert!(client.get_escrow(&new_id).is_some());
+}
+
+// =============================================================================
+// Metadata Access Control Tests (#165)
+// =============================================================================
+
+use crate::types::MetadataVisibility;
+
+fn setup_private_escrow<'a>(
+    env: &Env,
+    client: &ContractClient<'a>,
+) -> (Address, Address, Address, Address, u64) {
+    let admin = Address::generate(env);
+    let buyer = Address::generate(env);
+    let seller = Address::generate(env);
+    let arbiter = Address::generate(env);
+    let token = Address::generate(env);
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+    let metadata = Bytes::from_slice(env, b"secret-ref");
+    let escrow_id = client.create_escrow(
+        &buyer, &seller, &token, &1000, &Some(metadata), &Some(arbiter.clone()), &None,
+    );
+    (admin, buyer, seller, arbiter, escrow_id)
+}
+
+#[test]
+fn test_metadata_private_buyer_can_read() {
+    let (env, client) = setup();
+    let (_admin, buyer, _seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    assert!(client.get_escrow_metadata(&id, &buyer).is_some());
+}
+
+#[test]
+fn test_metadata_private_seller_can_read() {
+    let (env, client) = setup();
+    let (_admin, _buyer, seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    assert!(client.get_escrow_metadata(&id, &seller).is_some());
+}
+
+#[test]
+fn test_metadata_private_arbiter_can_read() {
+    let (env, client) = setup();
+    let (_admin, _buyer, _seller, arbiter, id) = setup_private_escrow(&env, &client);
+    assert!(client.get_escrow_metadata(&id, &arbiter).is_some());
+}
+
+#[test]
+fn test_metadata_private_admin_can_read() {
+    let (env, client) = setup();
+    let (admin, _buyer, _seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    assert!(client.get_escrow_metadata(&id, &admin).is_some());
+}
+
+#[test]
+fn test_metadata_private_stranger_denied() {
+    let (env, client) = setup();
+    let (_admin, _buyer, _seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    let stranger = Address::generate(&env);
+    assert_eq!(
+        client.try_get_escrow_metadata(&id, &stranger),
+        Err(Ok(ContractError::MetadataAccessDenied))
+    );
+}
+
+#[test]
+fn test_metadata_public_anyone_can_read() {
+    let (env, client) = setup();
+    let (_admin, _buyer, _seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    client.set_metadata_visibility(&id, &MetadataVisibility::Public);
+    let stranger = Address::generate(&env);
+    assert!(client.get_escrow_metadata(&id, &stranger).is_some());
+}
+
+#[test]
+#[should_panic]
+fn test_set_metadata_visibility_non_buyer_panics() {
+    let (env, client) = setup();
+    let (_admin, _buyer, seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    client
+        .mock_auths(&[soroban_sdk::testutils::MockAuth {
+            address: &seller,
+            invoke: &soroban_sdk::testutils::MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "set_metadata_visibility",
+                args: (&id, &MetadataVisibility::Public).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .set_metadata_visibility(&id, &MetadataVisibility::Public);
+}
+
+#[test]
+fn test_set_metadata_visibility_not_found() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0);
+    assert_eq!(
+        client.try_set_metadata_visibility(&999, &MetadataVisibility::Public),
+        Err(Ok(ContractError::EscrowNotFound))
+    );
+}
+
+#[test]
+fn test_metadata_toggle_back_to_private() {
+    let (env, client) = setup();
+    let (_admin, buyer, _seller, _arbiter, id) = setup_private_escrow(&env, &client);
+    client.set_metadata_visibility(&id, &MetadataVisibility::Public);
+    client.set_metadata_visibility(&id, &MetadataVisibility::Private);
+    let stranger = Address::generate(&env);
+    assert_eq!(
+        client.try_get_escrow_metadata(&id, &stranger),
+        Err(Ok(ContractError::MetadataAccessDenied))
+    );
+    assert!(client.get_escrow_metadata(&id, &buyer).is_some());
 }

@@ -98,15 +98,11 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent,
-    EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    CancellationProposedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
+    FeeCollectedEvent, FundsReleasedEvent, MetadataVisibility, RefundHistoryEntry, RefundReason,
+    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -512,9 +508,61 @@ impl Contract {
         env.storage().persistent().get(&DataKey::Escrow(escrow_id))
     }
 
-    pub fn get_escrow_metadata(env: Env, escrow_id: u64) -> Option<Bytes> {
-        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
-        escrow.and_then(|e| e.metadata)
+    pub fn get_escrow_metadata(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+    ) -> Result<Option<Bytes>, ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        let visibility: MetadataVisibility = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MetadataVisibility(escrow_id))
+            .unwrap_or(MetadataVisibility::Private);
+
+        if visibility == MetadataVisibility::Private {
+            let is_party = caller == escrow.buyer
+                || caller == escrow.seller
+                || escrow.arbiter.as_ref().map_or(false, |a| *a == caller);
+            let is_admin = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::Admin)
+                .map_or(false, |a| a == caller);
+            if !is_party && !is_admin {
+                return Err(ContractError::MetadataAccessDenied);
+            }
+            caller.require_auth();
+        }
+
+        Ok(escrow.metadata)
+    }
+
+    /// Set metadata visibility. Only the buyer may call this.
+    /// Defaults to `Private`; set to `Public` to allow anyone to read.
+    pub fn set_metadata_visibility(
+        env: Env,
+        escrow_id: u64,
+        visibility: MetadataVisibility,
+    ) -> Result<(), ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        escrow.buyer.require_auth();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::MetadataVisibility(escrow_id), &visibility);
+
+        Ok(())
     }
 
     /// Get the items for an escrow.

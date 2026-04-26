@@ -38,6 +38,8 @@ pub enum DataKey {
     FeeBps,
     MinFee,
     MaxFee,
+    NativeAsset,
+    NativeFeeBps,
     ReentrancyLock,
     Admin,
     ProposedAdmin,

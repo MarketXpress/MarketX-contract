@@ -657,11 +657,27 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
-        let fee_bps: u32 = env
+        let mut fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
             .unwrap_or(0);
+
+        // Special logic for Native XLM
+        if let Some(native_asset) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::NativeAsset)
+        {
+            if escrow.token == native_asset {
+                fee_bps = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::NativeFeeBps)
+                    .unwrap_or(fee_bps);
+            }
+        }
+
         let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
 
         let min_fee: i128 = env
@@ -1322,6 +1338,38 @@ impl Contract {
         .publish(&env);
 
         Ok(())
+    }
+
+    pub fn set_native_fee(
+        env: Env,
+        native_token: Address,
+        native_fee_bps: u32,
+    ) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        if native_fee_bps > 1000 {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::NativeAsset, &native_token);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NativeFeeBps, &native_fee_bps);
+
+        Ok(())
+    }
+
+    pub fn get_native_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::NativeFeeBps)
+            .unwrap_or(0)
+    }
+
+    pub fn get_native_asset(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::NativeAsset)
     }
 
     pub fn get_min_fee(env: Env) -> i128 {

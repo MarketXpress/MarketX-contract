@@ -101,15 +101,8 @@ pub use types::{
     AdminTransferredEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, CancellationProposedEvent,
     CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowExpiredEvent,
     EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
-    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
-    FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
-    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
-    FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
-    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
+    FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest,
+    RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
     MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
@@ -287,6 +280,18 @@ impl Contract {
         let key = DataKey::PendingFee(collector.clone(), token.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + amount));
+    }
+
+    fn enter_lock(env: &Env) -> Result<(), ContractError> {
+        if env.storage().persistent().has(&DataKey::ReentrancyLock) {
+            return Err(ContractError::ReentrancyForbidden);
+        }
+        env.storage().persistent().set(&DataKey::ReentrancyLock, &true);
+        Ok(())
+    }
+
+    fn exit_lock(env: &Env) {
+        env.storage().persistent().remove(&DataKey::ReentrancyLock);
     }
 }
 
@@ -664,16 +669,20 @@ impl Contract {
 
     pub fn fund_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
 
         // 1. Load and validate the escrow exists
-        let escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         // 2. Validate escrow is in Pending state
         if escrow.status != EscrowStatus::Pending {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -699,21 +708,26 @@ impl Contract {
             &(current_total + escrow.amount),
         );
 
+        Self::exit_lock(&env);
         Ok(())
     }
 
     pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
 
         // 1. Load and validate the escrow exists
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let mut escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         // 2. Validate escrow is in Pending state
         if escrow.status != EscrowStatus::Pending {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -723,14 +737,13 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
-        let mut fee_bps: u32 = env
         // Whitelisted buyers (partners/internal) pay zero fees.
         let is_exempt: bool = env
             .storage()
             .persistent()
             .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
             .unwrap_or(false);
-        let fee_bps: u32 = env
+        let mut fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
@@ -751,34 +764,34 @@ impl Contract {
             }
         }
 
-        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-
-        let min_fee: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MinFee)
-            .unwrap_or(0);
-        let max_fee: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MaxFee)
-            .unwrap_or(0);
-
-        if fee < min_fee {
-            fee = min_fee;
-        }
-        if max_fee > 0 && fee > max_fee {
-            fee = max_fee;
-        }
-
-        // Ensure fee doesn't exceed the escrow amount
-        if fee > escrow.amount {
-            fee = escrow.amount;
-        }
         let fee: i128 = if is_exempt {
             0
         } else {
-            escrow.amount * (fee_bps as i128) / 10_000
+            let mut f = escrow.amount * (fee_bps as i128) / 10_000;
+
+            let min_fee: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::MinFee)
+                .unwrap_or(0);
+            let max_fee: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::MaxFee)
+                .unwrap_or(0);
+
+            if f < min_fee {
+                f = min_fee;
+            }
+            if max_fee > 0 && f > max_fee {
+                f = max_fee;
+            }
+
+            // Ensure fee doesn't exceed the escrow amount
+            if f > escrow.amount {
+                f = escrow.amount;
+            }
+            f
         };
         let seller_amount = escrow.amount - fee;
 
@@ -794,13 +807,15 @@ impl Contract {
 
         // 6. Route fee to fee collector (only if fee > 0)
         if fee > 0 {
-            let fee_collector: Address = env
-                .storage()
-                .persistent()
-                .get(&DataKey::FeeCollector)
-                .ok_or(ContractError::InvalidFeeConfig)?;
+            let fee_collector: Address = match env.storage().persistent().get(&DataKey::FeeCollector) {
+                Some(fc) => fc,
+                None => {
+                    Self::exit_lock(&env);
+                    return Err(ContractError::InvalidFeeConfig);
+                }
+            };
 
-            Self::add_pending_fee(&env, fee_collector, escrow.token.clone(), fee);
+            token_client.transfer(&env.current_contract_address(), &fee_collector, &fee);
 
             Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
 
@@ -843,6 +858,7 @@ impl Contract {
             &(current_released_total + escrow.amount),
         );
 
+        Self::exit_lock(&env);
         Ok(())
     }
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
@@ -867,16 +883,20 @@ impl Contract {
     /// * `ItemAlreadyReleased` - If the item has already been released
     pub fn release_item(env: Env, escrow_id: u64, item_index: u32) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
 
         // 1. Load and validate the escrow exists
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let mut escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         // 2. Validate escrow is in Pending state
         if escrow.status != EscrowStatus::Pending {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -885,12 +905,14 @@ impl Contract {
 
         // 4. Validate item exists
         if item_index as u32 >= escrow.items.len() {
+            Self::exit_lock(&env);
             return Err(ContractError::ItemNotFound);
         }
 
         // 5. Get the item and check if already released
         let mut item = escrow.items.get(item_index as u32).unwrap();
         if item.released {
+            Self::exit_lock(&env);
             return Err(ContractError::ItemAlreadyReleased);
         }
 
@@ -945,6 +967,7 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
+        Self::exit_lock(&env);
         Ok(())
     }
 
@@ -954,24 +977,30 @@ impl Contract {
         actor: Address,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
         actor.require_auth();
 
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let mut escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         if !Self::is_escrow_party(&escrow, &actor) {
+            Self::exit_lock(&env);
             return Err(ContractError::Unauthorized);
         }
 
         if escrow.status != EscrowStatus::Pending || Self::has_released_items(&escrow) {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
         if let Some(existing) = &escrow.cancellation_proposer {
             if *existing == actor {
+                Self::exit_lock(&env);
                 return Ok(());
             }
 
@@ -982,6 +1011,8 @@ impl Contract {
                 .persistent()
                 .set(&DataKey::Escrow(escrow_id), &escrow);
             Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+            
+            Self::exit_lock(&env);
             return Ok(());
         }
 
@@ -992,6 +1023,7 @@ impl Contract {
 
         CancellationProposedEvent { escrow_id, actor }.publish(&env);
 
+        Self::exit_lock(&env);
         Ok(())
     }
 
@@ -1001,28 +1033,37 @@ impl Contract {
         actor: Address,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
         actor.require_auth();
 
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let mut escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         if !Self::is_escrow_party(&escrow, &actor) {
+            Self::exit_lock(&env);
             return Err(ContractError::Unauthorized);
         }
 
         if escrow.status != EscrowStatus::Pending || Self::has_released_items(&escrow) {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
-        let proposer = escrow
-            .cancellation_proposer
-            .clone()
-            .ok_or(ContractError::InvalidEscrowState)?;
+        let proposer = match escrow.cancellation_proposer.clone() {
+            Some(p) => p,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::InvalidEscrowState);
+            }
+        };
 
         if proposer == actor {
+            Self::exit_lock(&env);
             return Err(ContractError::Unauthorized);
         }
 
@@ -1033,6 +1074,7 @@ impl Contract {
             .set(&DataKey::Escrow(escrow_id), &escrow);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
+        Self::exit_lock(&env);
         Ok(())
     }
 
@@ -1211,14 +1253,18 @@ impl Contract {
     /// `resolution`: 0 = release to seller, 1 = refund to buyer
     pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: u32) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::enter_lock(&env)?;
 
-        let mut escrow: Escrow = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Escrow(escrow_id))
-            .ok_or(ContractError::EscrowNotFound)?;
+        let mut escrow: Escrow = match env.storage().persistent().get(&DataKey::Escrow(escrow_id)) {
+            Some(e) => e,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::EscrowNotFound);
+            }
+        };
 
         if escrow.status != EscrowStatus::Disputed {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1228,11 +1274,15 @@ impl Contract {
                 arbiter.require_auth();
                 arbiter.clone()
             }
-            None => Self::assert_admin(&env)?,
+            None => match Self::assert_admin(&env) {
+                Ok(a) => a,
+                Err(e) => {
+                    Self::exit_lock(&env);
+                    return Err(e);
+                }
+            },
         };
         let from_status = escrow.status.clone();
-
-        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
 
         if resolution == 0 {
             // Release to seller
@@ -1259,6 +1309,7 @@ impl Contract {
             // Refund to buyer
             Self::refund_buyer(&env, &mut escrow);
         } else {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1294,6 +1345,7 @@ impl Contract {
 
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
+        Self::exit_lock(&env);
         Ok(())
     }
 
@@ -1465,6 +1517,8 @@ impl Contract {
             .persistent()
             .get(&DataKey::MaxFee)
             .unwrap_or(0)
+    }
+
     /// Add an address to the fee exemption whitelist. Admin only.
     pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
         let admin = Self::assert_admin(&env)?;
@@ -1513,16 +1567,20 @@ impl Contract {
     /// This follows the pull pattern for revenue sharing, allowing collectors
     /// to claim their fees at their convenience.
     pub fn withdraw_fees(env: Env, collector: Address, token: Address) -> Result<(), ContractError> {
+        Self::enter_lock(&env)?;
         collector.require_auth();
 
         let key = DataKey::PendingFee(collector.clone(), token.clone());
-        let amount: i128 = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .ok_or(ContractError::InvalidEscrowAmount)?;
+        let amount: i128 = match env.storage().persistent().get(&key) {
+            Some(a) => a,
+            None => {
+                Self::exit_lock(&env);
+                return Err(ContractError::InvalidEscrowAmount);
+            }
+        };
 
         if amount <= 0 {
+            Self::exit_lock(&env);
             return Err(ContractError::InvalidEscrowAmount);
         }
 
@@ -1538,6 +1596,7 @@ impl Contract {
         }
         .publish(&env);
 
+        Self::exit_lock(&env);
         Ok(())
     }
 

@@ -99,6 +99,8 @@ use soroban_sdk::xdr::ToXdr;
 pub use errors::ContractError;
 pub use types::{
     AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeCapsChangedEvent,
+    FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
     Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent,
     FeeCollectedEvent, FeeExemptionEvent, FundsReleasedEvent, RefundHistoryEntry, RefundReason,
     RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW,
@@ -300,7 +302,14 @@ impl Contract {
     ///
     /// # Errors
     /// This function cannot fail as it's the initialization function
-    pub fn initialize(env: Env, admin: Address, fee_collector: Address, fee_bps: u32) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        fee_collector: Address,
+        fee_bps: u32,
+        min_fee: i128,
+        max_fee: i128,
+    ) {
         admin.require_auth();
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
@@ -308,6 +317,8 @@ impl Contract {
             .persistent()
             .set(&DataKey::FeeCollector, &fee_collector);
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+        env.storage().persistent().set(&DataKey::MinFee, &min_fee);
+        env.storage().persistent().set(&DataKey::MaxFee, &max_fee);
 
         env.storage().persistent().set(&DataKey::Paused, &false);
         env.storage()
@@ -668,6 +679,30 @@ impl Contract {
             .persistent()
             .get(&DataKey::FeeBps)
             .unwrap_or(0);
+        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+
+        let min_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0);
+        let max_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0);
+
+        if fee < min_fee {
+            fee = min_fee;
+        }
+        if max_fee > 0 && fee > max_fee {
+            fee = max_fee;
+        }
+
+        // Ensure fee doesn't exceed the escrow amount
+        if fee > escrow.amount {
+            fee = escrow.amount;
+        }
         let fee: i128 = if is_exempt {
             0
         } else {
@@ -1281,6 +1316,51 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    pub fn set_fee_caps(env: Env, min_fee: i128, max_fee: i128) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+
+        if max_fee > 0 && min_fee > max_fee {
+            return Err(ContractError::InvalidFeeConfig);
+        }
+
+        let old_min_fee = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0);
+        let old_max_fee = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0);
+
+        env.storage().persistent().set(&DataKey::MinFee, &min_fee);
+        env.storage().persistent().set(&DataKey::MaxFee, &max_fee);
+
+        FeeCapsChangedEvent {
+            old_min_fee,
+            new_min_fee: min_fee,
+            old_max_fee,
+            new_max_fee: max_fee,
+            actor: admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn get_min_fee(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0)
+    }
+
+    pub fn get_max_fee(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0)
     /// Add an address to the fee exemption whitelist. Admin only.
     pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
         let admin = Self::assert_admin(&env)?;

@@ -37,6 +37,7 @@ pub enum DataKey {
     FeeCollector,
     FeeBps,
     MinFee,
+    MaxFee,
     ReentrancyLock,
     Admin,
     ProposedAdmin,
@@ -184,6 +185,16 @@ pub struct CancellationProposedEvent {
 pub struct FeeChangedEvent {
     pub old_fee_bps: u32,
     pub new_fee_bps: u32,
+    pub actor: Address,
+}
+
+#[contractevent(topics = ["fee_caps_changed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCapsChangedEvent {
+    pub old_min_fee: i128,
+    pub new_min_fee: i128,
+    pub old_max_fee: i128,
+    pub new_max_fee: i128,
     pub actor: Address,
 }
 

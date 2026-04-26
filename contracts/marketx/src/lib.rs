@@ -201,6 +201,21 @@ impl Contract {
         Ok(())
     }
 
+    fn validate_address(env: &Env, address: &Address) -> Result<(), ContractError> {
+        // Check if address is a zero address by serializing and checking if all bytes are zero
+        let xdr_bytes = address.to_xdr(env);
+        
+        // Check if any byte is non-zero
+        let is_zero = xdr_bytes.iter().all(|&byte| byte == 0);
+        
+        if is_zero {
+            return Err(ContractError::ZeroAddress);
+        }
+        
+        Ok(())
+    }
+
+
     fn generate_escrow_hash(
         env: &Env,
         buyer: &Address,
@@ -301,12 +316,13 @@ impl Contract {
     /// # Requirements
     /// - Must be called exactly once during contract deployment
     /// - `fee_bps` should be reasonable (typically < 1000 bps = 10%)
+    /// - `admin` and `fee_collector` must not be zero addresses
     ///
     /// # Events
     /// Emits no events during initialization
     ///
     /// # Errors
-    /// This function cannot fail as it's the initialization function
+    /// * `ZeroAddress` - If admin or fee_collector is a zero address
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -314,8 +330,12 @@ impl Contract {
         fee_bps: u32,
         min_fee: i128,
         max_fee: i128,
-    ) {
+    ) -> Result<(), ContractError> {
         admin.require_auth();
+
+        // Validate that admin and fee_collector are not zero addresses
+        Self::validate_address(&env, &admin)?;
+        Self::validate_address(&env, &fee_collector)?;
 
         env.storage().persistent().set(&DataKey::Admin, &admin);
         env.storage()
@@ -342,6 +362,8 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);
+
+        Ok(())
     }
 
     /// Pause the contract, disabling all critical operations.
@@ -416,6 +438,16 @@ impl Contract {
         tracking_id: Option<Bytes>,
     ) -> Result<u64, ContractError> {
         Self::validate_metadata(&metadata)?;
+
+        // Validate that addresses are not zero addresses
+        Self::validate_address(&env, &buyer)?;
+        Self::validate_address(&env, &seller)?;
+        Self::validate_address(&env, &token)?;
+
+        // Validate arbiter if provided
+        if let Some(ref arb) = arbiter {
+            Self::validate_address(&env, arb)?;
+        }
 
         if amount <= 0 {
             return Err(ContractError::InvalidEscrowAmount);

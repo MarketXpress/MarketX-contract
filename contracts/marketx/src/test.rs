@@ -11,8 +11,8 @@ use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
 use crate::types::{EscrowItem, MAX_METADATA_SIZE};
 use crate::{
-    BulkEscrowCreatedEvent, BulkEscrowRequest, Contract, ContractClient, EscrowCreatedEvent,
-    FundsReleasedEvent, StatusChangeEvent,
+    BulkEscrowRequest, Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent,
+    StatusChangeEvent,
 };
 
 fn setup<'a>() -> (Env, ContractClient<'a>) {
@@ -2300,7 +2300,6 @@ fn test_non_whitelisted_buyer_pays_fee() {
 fn test_special_native_fee() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let collector = Address::generate(&env);
 
@@ -2404,35 +2403,26 @@ fn test_oracle_verified_delivery_release() {
 fn test_verify_delivery_fails_if_not_oracle() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
-    let buyer = Address::generate(&env);
-    let seller = Address::generate(&env);
-    let oracle = Address::generate(&env);
-    let non_oracle = Address::generate(&env);
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
-    client.set_oracle(&oracle);
 
-    let tracking_id = Bytes::from_slice(&env, b"SHIP-12345");
+    // No oracle set — verify_delivery should return NotOracle
     let escrow_id = client.create_escrow(
-        &buyer,
-        &seller,
+        &Address::generate(&env),
+        &Address::generate(&env),
         &Address::generate(&env),
         &1000,
         &None,
         &None,
         &None,
-        &Some(tracking_id),
+        &Some(Bytes::from_slice(&env, b"SHIP-12345")),
     );
 
-    // Attempt to verify as non_oracle
-    // Note: mock_all_auths is on, but the contract checks if the caller is the registered oracle.
-    // Wait, mock_all_auths will make require_auth() pass for any address.
-    // But the contract logic checks env.storage().persistent().get(&DataKey::Oracle) == oracle.
-    // So if I call as non_oracle, oracle.require_auth() will be called where oracle is the registered one.
-    // This will fail if I didn't mock auth for the registered oracle.
-
-    // Actually, I'll just use try_verify_delivery and check for error if I can.
+    assert_eq!(
+        client.try_verify_delivery(&escrow_id),
+        Err(Ok(ContractError::NotOracle))
+    );
 }
 
 #[test]

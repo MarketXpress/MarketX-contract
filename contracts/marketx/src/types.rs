@@ -294,6 +294,8 @@ pub struct BulkEscrowCreatedEvent {
     pub buyer: Address,
     pub token: Address,
     pub escrow_ids: Vec<u64>,
+}
+
 #[contractevent(topics = ["fee_exemption"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeExemptionEvent {

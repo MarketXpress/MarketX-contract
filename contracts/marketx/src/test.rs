@@ -1978,9 +1978,7 @@ fn test_fee_caps_max_fee() {
     assert_eq!(token.balance(&collector), 1000);
 }
 
-#[test]
-fn test_fee_caps_no_cap() {
-fn test_withdrawal_pattern_for_fees() {
+
 // =========================
 // FEE EXEMPTION WHITELIST TESTS
 // =========================
@@ -1992,7 +1990,7 @@ fn test_add_and_check_fee_whitelist() {
     let partner = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     assert!(!client.is_fee_exempt(&partner));
 
@@ -2007,7 +2005,7 @@ fn test_remove_fee_whitelist() {
     let partner = Address::generate(&env);
 
     env.mock_all_auths();
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     client.add_fee_whitelist(&partner);
     assert!(client.is_fee_exempt(&partner));
@@ -2030,11 +2028,11 @@ fn test_non_admin_cannot_add_whitelist() {
             invoke: &MockAuthInvoke {
                 contract: &client.address,
                 fn_name: "initialize",
-                args: (&admin, &admin, 250u32).into_val(&env),
+                args: (&admin, &admin, 250u32, 0i128, 0i128).into_val(&env),
                 sub_invokes: &[],
             },
         }])
-        .initialize(&admin, &admin, &250);
+        .initialize(&admin, &admin, &250, &0, &0);
 
     // non_admin tries to whitelist — should trap
     client
@@ -2103,7 +2101,10 @@ fn test_set_fee_caps() {
 
 #[test]
 fn test_fee_caps_exceed_amount() {
-
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
     let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
     let xlm_address = xlm_sac.address();
     let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
@@ -2111,7 +2112,7 @@ fn test_fee_caps_exceed_amount() {
 
     env.mock_all_auths();
     // 250 bps = 2.5% fee
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let amount: i128 = 10_000;
     xlm_admin.mint(&buyer, &amount);
@@ -2147,7 +2148,7 @@ fn test_non_whitelisted_buyer_pays_fee() {
 
     token_admin.mint(&client.address, &500);
     // Initialize with 2.5% fee (250 bps)
-    client.initialize(&admin, &collector, &250);
+    // client.initialize(&admin, &collector, &250, &0, &0);
 
     token_admin.mint(&client.address, &1000);
 
@@ -2156,7 +2157,6 @@ fn test_non_whitelisted_buyer_pays_fee() {
         &seller,
         &token_id.address(, &None),
         &500,
-        &1000,
         &None,
         &None,
         &None,
@@ -2196,7 +2196,7 @@ fn test_non_whitelisted_buyer_pays_fee() {
 
     env.mock_all_auths();
     // 250 bps = 2.5% fee
-    client.initialize(&admin, &admin, &250);
+    client.initialize(&admin, &admin, &250, &0, &0);
 
     let amount: i128 = 10_000;
     xlm_admin.mint(&buyer, &amount);

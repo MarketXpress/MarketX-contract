@@ -743,6 +743,48 @@ impl Contract {
         Ok(())
     }
 
+    /// Allows a third party (like an Auction contract) to fund an escrow on behalf of the buyer.
+    /// The funds are drawn from the `funder` address instead of the `buyer`.
+    pub fn fund_escrow_by(env: Env, escrow_id: u64, funder: Address) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        // 1. Load and validate the escrow exists
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // 2. Validate escrow is in Pending state
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        // 3. Enforce funder authorization
+        funder.require_auth();
+
+        // 4. Transfer funds from funder into the contract
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        #[allow(clippy::needless_borrows_for_generic_args)]
+        token_client.transfer(
+            &funder,
+            &env.current_contract_address(),
+            &escrow.amount,
+        );
+
+        let current_total: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalFundedAmount)
+            .unwrap_or(0);
+        env.storage().persistent().set(
+            &DataKey::TotalFundedAmount,
+            &(current_total + escrow.amount),
+        );
+
+        Ok(())
+    }
+
     pub fn release_escrow(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 

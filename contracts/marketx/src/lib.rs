@@ -297,6 +297,65 @@ impl Contract {
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + amount));
     }
+
+    fn get_volume_tiers_config(env: &Env) -> VolumeTierConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or(VolumeTierConfig::default())
+    }
+
+    fn should_reset_volume(env: &Env, last_reset: u32) -> bool {
+        let current_ledger = env.ledger().sequence();
+        current_ledger.saturating_sub(last_reset) >= 1_576_800
+    }
+
+    fn calc_buyer_volume(env: &Env, buyer: &Address) -> i128 {
+        let config = Self::get_volume_tiers_config(env);
+        if Self::should_reset_volume(env, config.reset_ledger) {
+            return 0;
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::BuyerVolume(buyer.clone()))
+            .unwrap_or(0)
+    }
+
+    fn calculate_buyer_tier(env: &Env, buyer: &Address) -> u8 {
+        let volume = Self::calc_buyer_volume(env, buyer);
+        let config = Self::get_volume_tiers_config(env);
+        config.get_tier(volume)
+    }
+
+    fn update_buyer_volume(env: &Env, buyer: &Address, amount: i128) {
+        let mut config = Self::get_volume_tiers_config(env);
+
+        if Self::should_reset_volume(env, config.reset_ledger) {
+            config.reset_ledger = env.ledger().sequence();
+            env.storage().persistent().set(&DataKey::VolumeTiers, &config);
+        }
+
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BuyerVolume(buyer.clone()))
+            .unwrap_or(0);
+
+        let new_volume = current.saturating_add(amount);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::BuyerVolume(buyer.clone()), &new_volume);
+
+        let _tier = config.get_tier(new_volume);
+
+        VolumeUpdatedEvent {
+            buyer: buyer.clone(),
+            added_amount: amount,
+            new_volume,
+        }
+        .publish(env);
+    }
 }
 
 #[contractimpl]
@@ -358,6 +417,16 @@ impl Contract {
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);
 
+        let default_tiers = VolumeTierConfig {
+            tier_1_threshold: 100_000,
+            tier_2_threshold: 1_000_000,
+            tier_3_threshold: 10_000_000,
+            tier_1_discount_bps: 100,
+            tier_2_discount_bps: 250,
+            tier_3_discount_bps: 500,
+            reset_ledger: env.ledger().sequence(),
+        };
+        env.storage().persistent().set(&DataKey::VolumeTiers, &default_tiers);
         Ok(())
     }
 
@@ -950,6 +1019,9 @@ impl Contract {
         let actor = escrow.buyer.clone();
         let from_status = escrow.status.clone();
 
+        // 4. Calculate fee with fixed single-path logic
+        // Step 4a: Check whitelist first (100% exemption)
+        let is_whitelisted: bool = env
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
         // Whitelisted buyers (partners/internal) pay zero fees.
         let is_exempt: bool = env
@@ -957,6 +1029,55 @@ impl Contract {
             .persistent()
             .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
             .unwrap_or(false);
+
+        let fee = if is_whitelisted {
+            0
+        } else {
+            // Step 4b: Get base fee bps
+            let base_fee_bps: u32 = env.storage().persistent().get(&DataKey::FeeBps).unwrap_or(0);
+
+            // Step 4c: Check for native XLM special rate
+            let effective_fee_bps = if let Some(native_asset) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, Address>(&DataKey::NativeAsset)
+            {
+                if escrow.token == native_asset {
+                    env.storage()
+                        .persistent()
+                        .get(&DataKey::NativeFeeBps)
+                        .unwrap_or(base_fee_bps)
+                } else {
+                    base_fee_bps
+                }
+            } else {
+                base_fee_bps
+            };
+
+            // Step 4d: Apply volume discount (capped at 50% = 500 bps)
+            let tier = Self::calculate_buyer_tier(&env, &escrow.buyer);
+            let tiers_config = Self::get_volume_tiers_config(&env);
+            let volume_discount = tiers_config.get_discount_bps(tier);
+            let actual_discount = volume_discount.min(500);
+            let discounted_fee_bps = effective_fee_bps.saturating_sub(actual_discount);
+
+            // Step 4e: Calculate fee (overflow-safe)
+            let mut calculated_fee = (escrow.amount / 10_000).saturating_mul(discounted_fee_bps as i128);
+            let remainder = escrow.amount % 10_000;
+            calculated_fee = calculated_fee.saturating_add((remainder * discounted_fee_bps as i128) / 10_000);
+
+            // Step 4f: Apply min/max caps
+            let min_fee: i128 = env.storage().persistent().get(&DataKey::MinFee).unwrap_or(0);
+            let max_fee: i128 = env.storage().persistent().get(&DataKey::MaxFee).unwrap_or(0);
+            calculated_fee = calculated_fee.max(min_fee);
+            if max_fee > 0 {
+                calculated_fee = calculated_fee.min(max_fee);
+            }
+
+            // Step 4g: Cap at escrow amount
+            calculated_fee.min(escrow.amount)
+        };
+
         let mut fee_bps: u32 = env
             .storage()
             .persistent()
@@ -1037,21 +1158,20 @@ impl Contract {
                     .storage()
                     .persistent()
                     .get(&DataKey::FeeCollector)
-                    .unwrap(), // Re-fetch to satisfy borrow checker if needed, or just use the one above
+                    .unwrap(),
                 fee,
             }
             .publish(&env);
         }
 
         // 7. Update escrow status to Released
-        // 5. Update escrow status to Released
         escrow.status = EscrowStatus::Released;
         escrow.cancellation_proposer = None;
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        // 8. Emit FundsReleasedEvent (amount = full escrow amount, fee = calculated fee)
+        // 8. Emit FundsReleasedEvent
         FundsReleasedEvent {
             escrow_id,
             amount: escrow.amount,
@@ -1069,6 +1189,9 @@ impl Contract {
             &DataKey::TotalReleasedAmount,
             &(current_released_total + escrow.amount),
         );
+
+        // 9. Update buyer volume for tier-based discounts
+        Self::update_buyer_volume(&env, &escrow.buyer, escrow.amount);
 
         Ok(())
     }
@@ -1788,6 +1911,33 @@ impl Contract {
             .persistent()
             .get(&DataKey::PendingFee(collector, token))
             .unwrap_or(0)
+    }
+
+    /// Get buyer total volume (for display/debugging)
+    pub fn buyer_volume(env: Env, buyer: Address) -> i128 {
+        let config = Self::get_volume_tiers_config(&env);
+        if Self::should_reset_volume(&env, config.reset_ledger) {
+            return 0;
+        }
+        env.storage()
+            .persistent()
+            .get(&DataKey::BuyerVolume(buyer))
+            .unwrap_or(0)
+    }
+
+    /// Get buyer current tier (0-3) based on volume
+    pub fn buyer_tier(env: Env, buyer: Address) -> u32 {
+        let volume = Self::buyer_volume(env.clone(), buyer);
+        if volume == 0 {
+            return 0;
+        }
+        let config = Self::get_volume_tiers_config(&env);
+        config.get_tier(volume) as u32
+    }
+
+    /// Get volume tier configuration
+    pub fn volume_tiers(env: Env) -> VolumeTierConfig {
+        Self::get_volume_tiers_config(&env)
     }
 }
 const federationQuerySchema = z.object({

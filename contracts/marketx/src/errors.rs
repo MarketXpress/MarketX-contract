@@ -22,5 +22,6 @@ pub enum ContractError {
     ItemAmountInvalid = 83,
     EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
+    MetadataAccessDenied = 61,
     ReentrancyForbidden = 100,
 }

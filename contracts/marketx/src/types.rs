@@ -62,6 +62,14 @@ pub enum DataKey {
     PendingFee(Address, Address),
     FeeWhitelist(Address),
     Oracle,
+    MetadataVisibility(u64),
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataVisibility {
+    Private,
+    Public,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;

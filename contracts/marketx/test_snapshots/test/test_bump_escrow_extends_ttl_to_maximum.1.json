@@ -62,6 +62,7 @@
                   "bytes": "74746c2d74657374"
                 },
                 "void",
+                "void",
                 "void"
               ]
             }
@@ -207,6 +208,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "tracking_id"
+                    },
+                    "val": "void"
                   }
                 ]
               }

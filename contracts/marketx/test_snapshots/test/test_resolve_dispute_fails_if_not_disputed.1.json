@@ -62,6 +62,7 @@
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
                 },
+                "void",
                 "void"
               ]
             }
@@ -205,6 +206,12 @@
                     "val": {
                       "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                     }
+                  },
+                  {
+                    "key": {
+                      "symbol": "tracking_id"
+                    },
+                    "val": "void"
                   }
                 ]
               }

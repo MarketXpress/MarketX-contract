@@ -295,7 +295,18 @@ impl Contract {
         }
         let key = DataKey::PendingFee(collector.clone(), token.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
-        env.storage().persistent().set(&key, &(current + amount));
+        env.storage().persistent().set(&key, &(current.saturating_add(amount)));
+    }
+
+    fn calculate_fee_bps_safe(amount: i128, fee_bps: u32) -> i128 {
+        if amount <= 0 || fee_bps == 0 {
+            return 0;
+        }
+        let quotient = amount / 10_000;
+        let remainder = amount % 10_000;
+        quotient.saturating_mul(fee_bps as i128).saturating_add(
+            (remainder * fee_bps as i128) / 10_000
+        )
     }
 
     fn get_volume_tiers_config(env: &Env) -> VolumeTierConfig {

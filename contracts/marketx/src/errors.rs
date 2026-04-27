@@ -20,6 +20,7 @@ pub enum ContractError {
     ItemAlreadyReleased = 81,
     TooManyItems = 82,
     ItemAmountInvalid = 83,
-    EscrowNotExpired = 90,
+EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
+    FeeCalculationOverflow = 100,
 }

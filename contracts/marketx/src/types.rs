@@ -58,10 +58,12 @@ pub enum DataKey {
     TotalFeesCollected,
     EscrowIds,
 
-    TotalReleasedAmount,
+TotalReleasedAmount,
     PendingFee(Address, Address),
     FeeWhitelist(Address),
     Oracle,
+    BuyerVolume(Address),
+    VolumeTiers,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -294,10 +296,71 @@ pub struct BulkEscrowCreatedEvent {
     pub buyer: Address,
     pub token: Address,
     pub escrow_ids: Vec<u64>,
+}
+
 #[contractevent(topics = ["fee_exemption"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeExemptionEvent {
     pub address: Address,
     pub exempted: bool,
     pub actor: Address,
+}
+
+pub const VOLUME_RESET_INTERVAL: u32 = 1_576_800;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeTierConfig {
+    pub tier_1_threshold: i128,
+    pub tier_2_threshold: i128,
+    pub tier_3_threshold: i128,
+    pub tier_1_discount_bps: u32,
+    pub tier_2_discount_bps: u32,
+    pub tier_3_discount_bps: u32,
+    pub reset_ledger: u32,
+}
+
+impl Default for VolumeTierConfig {
+    fn default() -> Self {
+        Self {
+            tier_1_threshold: 100_000,
+            tier_2_threshold: 1_000_000,
+            tier_3_threshold: 10_000_000,
+            tier_1_discount_bps: 100,
+            tier_2_discount_bps: 250,
+            tier_3_discount_bps: 500,
+            reset_ledger: 0,
+        }
+    }
+}
+
+impl VolumeTierConfig {
+    pub fn get_tier(&self, volume: i128) -> u8 {
+        if volume >= self.tier_3_threshold {
+            3
+        } else if volume >= self.tier_2_threshold {
+            2
+        } else if volume >= self.tier_1_threshold {
+            1
+        } else {
+            0
+        }
+    }
+
+    pub fn get_discount_bps(&self, tier: u8) -> u32 {
+        match tier {
+            1 => self.tier_1_discount_bps,
+            2 => self.tier_2_discount_bps,
+            3 => self.tier_3_discount_bps,
+            _ => 0,
+        }
+    }
+}
+
+#[contractevent(topics = ["volume_updated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeUpdatedEvent {
+    pub buyer: Address,
+    pub added_amount: i128,
+    pub new_volume: i128,
 }

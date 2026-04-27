@@ -65,6 +65,18 @@ pub enum DataKey {
     MilestoneEscrow(u64),
     TimeLockEscrow(u64),
     GroupBuyEscrow(u64),
+
+    // ── Dispute Resolution V2 ─────────────────────────────────────────────────
+    /// Stake record for an arbiter on a specific escrow (#201).
+    ArbiterStake(u64),
+    /// Minimum stake required to act as arbiter (#201).
+    MinArbiterStake,
+    /// Evidence submission window for a disputed escrow (#202).
+    EvidenceWindow(u64),
+    /// Appeal record for a resolved dispute (#203).
+    Appeal(u64),
+    /// Cumulative on-chain reputation for an arbiter address (#204).
+    ArbiterReputation(Address),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -404,4 +416,154 @@ pub struct BatchFeesCollectedEvent {
     pub token: Address,
     pub total_amount: i128,
     pub escrow_count: u32,
+}
+
+// ─── Dispute Resolution V2 types ─────────────────────────────────────────────
+
+/// Arbiter stake record for a specific escrow (#201).
+///
+/// An arbiter must lock `amount` tokens before being authorised to resolve
+/// the dispute. Slashing deducts from `amount` and is applied by the admin
+/// when an appeal overturns the arbiter's ruling.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterStake {
+    /// Arbiter address.
+    pub arbiter: Address,
+    /// Token address the stake is denominated in (same as escrow token).
+    pub token: Address,
+    /// Amount currently staked.
+    pub amount: i128,
+    /// Ledger at which the stake was placed.
+    pub staked_at: u32,
+    /// Whether this stake has been slashed by an appeal override.
+    pub slashed: bool,
+    /// Slash amount deducted (0 if not slashed).
+    pub slash_amount: i128,
+}
+
+/// Evidence submission window for a disputed escrow (#202).
+///
+/// When a dispute is opened, an evidence window is set.  Both parties may
+/// submit evidence hashes within the window.  If the window expires without
+/// resolution the dispute auto-resolves in favour of the buyer (refund).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceWindow {
+    pub escrow_id: u64,
+    /// Ledger at which the window was opened.
+    pub opened_at: u32,
+    /// Ledger after which no new evidence is accepted.
+    pub expires_at: u32,
+    /// Whether the buyer submitted evidence.
+    pub buyer_submitted: bool,
+    /// Whether the seller submitted evidence.
+    pub seller_submitted: bool,
+    /// Hash of buyer evidence (off-chain IPFS / content hash).
+    pub buyer_evidence_hash: Option<Bytes>,
+    /// Hash of seller evidence.
+    pub seller_evidence_hash: Option<Bytes>,
+    /// Whether the window has expired and the default resolution applied.
+    pub expired: bool,
+}
+
+/// Default evidence window length in ledgers (~48 hours at 5 s/ledger).
+pub const DEFAULT_EVIDENCE_WINDOW_LEDGERS: u32 = 34_560;
+
+/// Appeal record for a resolved dispute (#203).
+///
+/// Either party may file an appeal within `APPEAL_WINDOW_LEDGERS` after the
+/// arbiter's ruling.  The admin acts as the final appellate authority.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppealRecord {
+    pub escrow_id: u64,
+    /// Party who filed the appeal (buyer or seller).
+    pub appellant: Address,
+    /// Ledger at which the appeal was filed.
+    pub filed_at: u32,
+    /// Whether the appeal has been resolved.
+    pub resolved: bool,
+    /// Final outcome: 0 = seller wins, 1 = buyer wins (None if not yet resolved).
+    pub outcome: Option<u32>,
+    /// Ledger at which the original arbiter ruling was made (for window check).
+    pub ruling_ledger: u32,
+}
+
+/// Ledgers after a ruling within which an appeal may be filed (~24 h).
+pub const APPEAL_WINDOW_LEDGERS: u32 = 17_280;
+
+/// On-chain arbiter reputation record (#204).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterReputation {
+    /// Arbiter address.
+    pub arbiter: Address,
+    /// Total number of disputes accepted.
+    pub total_disputes: u32,
+    /// Number successfully resolved (not overturned on appeal).
+    pub resolved_disputes: u32,
+    /// Number of rulings that were appealed.
+    pub appealed_rulings: u32,
+    /// Number of rulings overturned on appeal.
+    pub overturned_rulings: u32,
+    /// Number of times the arbiter's stake was slashed.
+    pub slash_count: u32,
+    /// Ledger of the most recent activity.
+    pub last_active: u32,
+}
+
+// ─── Dispute Resolution V2 events ────────────────────────────────────────────
+
+#[contractevent(topics = ["arbiter_staked"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterStakedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub arbiter: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["arbiter_slashed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterSlashedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub arbiter: Address,
+    pub slash_amount: i128,
+}
+
+#[contractevent(topics = ["evidence_submitted"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceSubmittedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub party: Address,
+    pub evidence_hash: Bytes,
+}
+
+#[contractevent(topics = ["evidence_window_expired"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EvidenceWindowExpiredEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub default_refund: bool,
+}
+
+#[contractevent(topics = ["appeal_filed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppealFiledEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub appellant: Address,
+}
+
+#[contractevent(topics = ["appeal_resolved"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppealResolvedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub admin: Address,
+    pub outcome: u32,
+    pub overturned: bool,
 }

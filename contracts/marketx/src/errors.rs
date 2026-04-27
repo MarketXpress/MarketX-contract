@@ -146,20 +146,10 @@ pub enum ContractError {
     ///
     /// **Used in:** `create_escrow()`
     ItemAmountInvalid = 83,
-
-    // =========================
-    // EXPIRY ERRORS (90-99)
-    // =========================
-    /// Escrow has not yet passed the unfunded expiry window.
-    ///
-    /// This error is returned when `cancel_unfunded` is called before
-    /// the escrow has been pending long enough to be considered expired.
-    ///
-    /// **Used in:** `cancel_unfunded()`
-    EscrowNotExpired = 90,
-
-    /// Escrow has already been funded and cannot be cancelled as unfunded.
-    ///
-    /// **Used in:** `cancel_unfunded()`
+EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
+    FeeCalculationOverflow = 100,
+    ZeroAddress = 100,
+    MetadataAccessDenied = 61,
+    ReentrancyForbidden = 100,
 }

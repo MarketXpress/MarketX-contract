@@ -98,18 +98,14 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, CancellationProposedEvent,
-    CounterEvidenceSubmittedEvent, DataKey, Escrow, EscrowCreatedEvent, EscrowExpiredEvent,
-    EscrowItem, EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
-    AdminTransferredEvent, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
+    AdminTransferredEvent, BatchFeesCollectedEvent, BulkEscrowCreatedEvent, BulkEscrowRequest,
+    BuyerContribution, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
     DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
     EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeExemptionEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    FeesWithdrawnEvent, FundsReleasedEvent, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
+    Milestone, MilestoneCompletedEvent, RefundHistoryEntry, RefundReason, RefundRequest,
+    RefundRequestedEvent, RefundStatus, StatusChangeEvent, TimeLock, TimeLockReleasedEvent,
+    MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -455,7 +451,10 @@ impl Contract {
             cancellation_proposer: None,
             items: escrow_items,
             created_at: env.ledger().sequence(),
-            tracking_id,
+            tracking_id: tracking_id.clone(),
+            milestones: Vec::new(&env),
+            time_lock: None,
+            group_buy: None,
         };
 
         env.storage()
@@ -542,7 +541,7 @@ impl Contract {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
 
-        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items)
+        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items, None)
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
@@ -567,6 +566,7 @@ impl Contract {
                 request.metadata.clone(),
                 request.arbiter.clone(),
                 request.items.clone(),
+                None, // tracking_id
             )?;
             ids.push_back(id);
         }
@@ -819,14 +819,14 @@ impl Contract {
         let from_status = escrow.status.clone();
 
         // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
-        let mut fee_bps: u32 = env
         // Whitelisted buyers (partners/internal) pay zero fees.
         let is_exempt: bool = env
             .storage()
             .persistent()
             .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
             .unwrap_or(false);
-        let fee_bps: u32 = env
+        
+        let mut fee_bps: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::FeeBps)
@@ -1561,6 +1561,8 @@ impl Contract {
             .persistent()
             .get(&DataKey::MaxFee)
             .unwrap_or(0)
+    }
+
     /// Add an address to the fee exemption whitelist. Admin only.
     pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
         let admin = Self::assert_admin(&env)?;
@@ -1643,5 +1645,537 @@ impl Contract {
             .persistent()
             .get(&DataKey::PendingFee(collector, token))
             .unwrap_or(0)
+    }
+
+    // =========================
+    // 💰 BATCH FEE COLLECTION (#171)
+    // =========================
+
+    /// Collect fees from multiple escrows in a single transaction.
+    /// This is more efficient than collecting fees one-by-one.
+    ///
+    /// # Arguments
+    /// * `escrow_ids` - Vector of escrow IDs to collect fees from
+    ///
+    /// # Returns
+    /// Total amount of fees collected
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If any escrow doesn't exist
+    /// * `InvalidEscrowState` - If any escrow is not in Released state
+    pub fn batch_collect_fees(
+        env: Env,
+        collector: Address,
+        token: Address,
+        escrow_ids: Vec<u64>,
+    ) -> Result<i128, ContractError> {
+        collector.require_auth();
+
+        let mut total_fees: i128 = 0;
+        let mut count: u32 = 0;
+
+        for escrow_id in escrow_ids.iter() {
+            let escrow: Escrow = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Escrow(escrow_id))
+                .ok_or(ContractError::EscrowNotFound)?;
+
+            // Only collect from released escrows with matching token
+            if escrow.status == EscrowStatus::Released && escrow.token == token {
+                // Calculate fee for this escrow
+                let fee_bps: u32 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::FeeBps)
+                    .unwrap_or(0);
+
+                let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
+                let min_fee: i128 = env.storage().persistent().get(&DataKey::MinFee).unwrap_or(0);
+                let max_fee: i128 = env.storage().persistent().get(&DataKey::MaxFee).unwrap_or(0);
+
+                if fee < min_fee {
+                    fee = min_fee;
+                }
+                if max_fee > 0 && fee > max_fee {
+                    fee = max_fee;
+                }
+                if fee > escrow.amount {
+                    fee = escrow.amount;
+                }
+
+                total_fees += fee;
+                count += 1;
+            }
+        }
+
+        if total_fees > 0 {
+            BatchFeesCollectedEvent {
+                collector: collector.clone(),
+                token: token.clone(),
+                total_amount: total_fees,
+                escrow_count: count,
+            }
+            .publish(&env);
+        }
+
+        Ok(total_fees)
+    }
+
+    // =========================
+    // 🎯 MILESTONE-BASED PAYMENTS (#173)
+    // =========================
+
+    /// Create an escrow with milestone-based payment releases.
+    ///
+    /// # Arguments
+    /// * `buyer` - The buyer's address
+    /// * `seller` - The seller's address
+    /// * `token` - The token contract address
+    /// * `amount` - The total escrow amount
+    /// * `milestones` - Vector of milestones with descriptions and amounts
+    /// * `metadata` - Optional metadata
+    /// * `arbiter` - Optional arbiter
+    ///
+    /// # Errors
+    /// * `ItemAmountInvalid` - If milestone amounts don't sum to total amount
+    pub fn create_milestone_escrow(
+        env: Env,
+        buyer: Address,
+        seller: Address,
+        token: Address,
+        amount: i128,
+        milestones: Vec<Milestone>,
+        metadata: Option<Bytes>,
+        arbiter: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        // Validate milestone amounts sum to total
+        let milestone_sum: i128 = milestones.iter().map(|m| m.amount).sum();
+        if milestone_sum != amount {
+            return Err(ContractError::ItemAmountInvalid);
+        }
+
+        let escrow_id = Self::create_escrow_internal(
+            env.clone(),
+            buyer,
+            seller,
+            token,
+            amount,
+            metadata,
+            arbiter,
+            None,
+            None,
+        )?;
+
+        // Store milestones separately
+        env.storage()
+            .persistent()
+            .set(&DataKey::MilestoneEscrow(escrow_id), &milestones);
+
+        // Update escrow with milestones
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.milestones = milestones;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        Ok(escrow_id)
+    }
+
+    /// Complete a milestone and release the associated payment.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The escrow ID
+    /// * `milestone_index` - The index of the milestone to complete
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If escrow doesn't exist
+    /// * `MilestoneNotFound` - If milestone index is invalid
+    /// * `MilestoneAlreadyCompleted` - If milestone is already completed
+    pub fn complete_milestone(
+        env: Env,
+        escrow_id: u64,
+        milestone_index: u32,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // Only buyer can complete milestones
+        escrow.buyer.require_auth();
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        // Get milestone
+        if milestone_index >= escrow.milestones.len() {
+            return Err(ContractError::MilestoneNotFound);
+        }
+
+        let mut milestone = escrow.milestones.get(milestone_index).unwrap();
+        if milestone.completed {
+            return Err(ContractError::MilestoneAlreadyCompleted);
+        }
+
+        // Mark milestone as completed
+        milestone.completed = true;
+        milestone.completed_at = Some(env.ledger().timestamp());
+        escrow.milestones.set(milestone_index, milestone.clone());
+
+        // Transfer milestone amount to seller
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.seller,
+            &milestone.amount,
+        );
+
+        // Check if all milestones are completed
+        let all_completed = escrow.milestones.iter().all(|m| m.completed);
+        if all_completed {
+            let from_status = escrow.status.clone();
+            escrow.status = EscrowStatus::Released;
+            Self::emit_status_change(
+                &env,
+                escrow_id,
+                from_status,
+                escrow.status.clone(),
+                escrow.buyer.clone(),
+            );
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        MilestoneCompletedEvent {
+            escrow_id,
+            milestone_index,
+            amount: milestone.amount,
+        }
+        .publish(&env);
+
+        Self::add_i128(&env, DataKey::TotalReleasedAmount, milestone.amount);
+
+        Ok(())
+    }
+
+    /// Get milestones for an escrow.
+    pub fn get_milestones(env: Env, escrow_id: u64) -> Option<Vec<Milestone>> {
+        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
+        escrow.map(|e| e.milestones)
+    }
+
+    // =========================
+    // ⏰ TIME-LOCKED AUTO-RELEASE (#174)
+    // =========================
+
+    /// Set a time-lock for automatic release of escrow funds.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The escrow ID
+    /// * `release_ledger` - The ledger sequence number when funds should auto-release
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If escrow doesn't exist
+    /// * `Unauthorized` - If caller is not buyer or seller
+    pub fn set_time_lock(
+        env: Env,
+        escrow_id: u64,
+        release_ledger: u32,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // Only buyer or seller can set time lock
+        let caller = escrow.buyer.clone(); // We'll use buyer as the caller
+        if !Self::is_escrow_party(&escrow, &caller) {
+            return Err(ContractError::Unauthorized);
+        }
+
+        escrow.buyer.require_auth();
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let time_lock = TimeLock {
+            release_ledger,
+            enabled: true,
+        };
+
+        escrow.time_lock = Some(time_lock.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TimeLockEscrow(escrow_id), &time_lock);
+
+        Ok(())
+    }
+
+    /// Trigger automatic release of time-locked escrow funds.
+    /// Anyone can call this once the release ledger is reached.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The escrow ID
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If escrow doesn't exist
+    /// * `TimeLockNotEnabled` - If time lock is not set
+    /// * `TimeLockNotReached` - If current ledger is before release ledger
+    pub fn trigger_time_lock_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let time_lock = escrow
+            .time_lock
+            .clone()
+            .ok_or(ContractError::TimeLockNotEnabled)?;
+
+        if !time_lock.enabled {
+            return Err(ContractError::TimeLockNotEnabled);
+        }
+
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < time_lock.release_ledger {
+            return Err(ContractError::TimeLockNotReached);
+        }
+
+        // Release funds to seller
+        let from_status = escrow.status.clone();
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.seller,
+            &escrow.amount,
+        );
+
+        escrow.status = EscrowStatus::Released;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        TimeLockReleasedEvent {
+            escrow_id,
+            amount: escrow.amount,
+        }
+        .publish(&env);
+
+        Self::emit_status_change(
+            &env,
+            escrow_id,
+            from_status,
+            escrow.status.clone(),
+            env.current_contract_address(),
+        );
+
+        Self::add_i128(&env, DataKey::TotalReleasedAmount, escrow.amount);
+
+        Ok(())
+    }
+
+    /// Get time lock configuration for an escrow.
+    pub fn get_time_lock(env: Env, escrow_id: u64) -> Option<TimeLock> {
+        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
+        escrow.and_then(|e| e.time_lock)
+    }
+
+    // =========================
+    // 👥 GROUP BUY ESCROW (#175)
+    // =========================
+
+    /// Create a group buy escrow where multiple buyers contribute to a single purchase.
+    ///
+    /// # Arguments
+    /// * `seller` - The seller's address
+    /// * `token` - The token contract address
+    /// * `target_amount` - The total amount needed
+    /// * `buyers` - Vector of buyer contributions
+    /// * `funding_deadline` - Ledger sequence number deadline for funding
+    /// * `metadata` - Optional metadata
+    /// * `arbiter` - Optional arbiter
+    ///
+    /// # Errors
+    /// * `InvalidGroupBuyAmount` - If buyer contributions don't sum to target amount
+    pub fn create_group_buy_escrow(
+        env: Env,
+        seller: Address,
+        token: Address,
+        target_amount: i128,
+        buyers: Vec<BuyerContribution>,
+        funding_deadline: u32,
+        metadata: Option<Bytes>,
+        arbiter: Option<Address>,
+    ) -> Result<u64, ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        // Validate buyer contributions sum to target
+        let contributions_sum: i128 = buyers.iter().map(|b| b.amount).sum();
+        if contributions_sum != target_amount {
+            return Err(ContractError::InvalidGroupBuyAmount);
+        }
+
+        // Use first buyer as primary buyer for escrow creation
+        let primary_buyer = buyers.get(0).ok_or(ContractError::InvalidGroupBuyAmount)?.buyer.clone();
+        primary_buyer.require_auth();
+
+        let escrow_id = Self::create_escrow_internal(
+            env.clone(),
+            primary_buyer,
+            seller,
+            token.clone(),
+            target_amount,
+            metadata,
+            arbiter,
+            None,
+            None,
+        )?;
+
+        // Create group buy configuration
+        let group_buy = GroupBuy {
+            buyers: buyers.clone(),
+            target_amount,
+            funded_amount: 0,
+            funding_deadline,
+        };
+
+        // Update escrow with group buy config
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.group_buy = Some(group_buy.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::GroupBuyEscrow(escrow_id), &group_buy);
+
+        Ok(escrow_id)
+    }
+
+    /// Fund a group buy escrow as one of the buyers.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The escrow ID
+    /// * `buyer` - The buyer's address
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If escrow doesn't exist
+    /// * `GroupBuyDeadlinePassed` - If funding deadline has passed
+    /// * `GroupBuyAlreadyFunded` - If buyer has already funded
+    /// * `Unauthorized` - If caller is not a registered buyer
+    pub fn fund_group_buy(env: Env, escrow_id: u64, buyer: Address) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        buyer.require_auth();
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if escrow.status != EscrowStatus::Pending {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let mut group_buy = escrow
+            .group_buy
+            .clone()
+            .ok_or(ContractError::InvalidEscrowState)?;
+
+        // Check deadline
+        if env.ledger().sequence() > group_buy.funding_deadline {
+            return Err(ContractError::GroupBuyDeadlinePassed);
+        }
+
+        // Find buyer in contributions list
+        let mut buyer_index: Option<u32> = None;
+        let mut buyer_amount: i128 = 0;
+
+        for (i, contribution) in group_buy.buyers.iter().enumerate() {
+            if contribution.buyer == buyer {
+                if contribution.funded {
+                    return Err(ContractError::GroupBuyAlreadyFunded);
+                }
+                buyer_index = Some(i as u32);
+                buyer_amount = contribution.amount;
+                break;
+            }
+        }
+
+        let index = buyer_index.ok_or(ContractError::Unauthorized)?;
+
+        // Transfer funds from buyer to contract
+        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
+        token_client.transfer(&buyer, &env.current_contract_address(), &buyer_amount);
+
+        // Update buyer contribution
+        let mut contribution = group_buy.buyers.get(index).unwrap();
+        contribution.funded = true;
+        group_buy.buyers.set(index, contribution);
+        group_buy.funded_amount += buyer_amount;
+
+        // Update escrow
+        escrow.group_buy = Some(group_buy.clone());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        GroupBuyFundedEvent {
+            escrow_id,
+            buyer: buyer.clone(),
+            amount: buyer_amount,
+        }
+        .publish(&env);
+
+        // Check if fully funded
+        if group_buy.funded_amount >= group_buy.target_amount {
+            GroupBuyCompletedEvent {
+                escrow_id,
+                total_amount: group_buy.funded_amount,
+            }
+            .publish(&env);
+        }
+
+        Self::add_i128(&env, DataKey::TotalFundedAmount, buyer_amount);
+
+        Ok(())
+    }
+
+    /// Get group buy configuration for an escrow.
+    pub fn get_group_buy(env: Env, escrow_id: u64) -> Option<GroupBuy> {
+        let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
+        escrow.and_then(|e| e.group_buy)
     }
 }

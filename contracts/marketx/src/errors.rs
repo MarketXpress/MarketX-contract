@@ -22,4 +22,12 @@ pub enum ContractError {
     ItemAmountInvalid = 83,
     EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
+    MilestoneNotFound = 100,
+    MilestoneAlreadyCompleted = 101,
+    TimeLockNotReached = 110,
+    TimeLockNotEnabled = 111,
+    GroupBuyNotFunded = 120,
+    GroupBuyAlreadyFunded = 121,
+    GroupBuyDeadlinePassed = 122,
+    InvalidGroupBuyAmount = 123,
 }

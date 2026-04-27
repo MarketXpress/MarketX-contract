@@ -62,6 +62,9 @@ pub enum DataKey {
     PendingFee(Address, Address),
     FeeWhitelist(Address),
     Oracle,
+    MilestoneEscrow(u64),
+    TimeLockEscrow(u64),
+    GroupBuyEscrow(u64),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -101,12 +104,68 @@ pub struct Escrow {
     pub created_at: u32,
     /// Optional shipping tracking ID for oracle verification.
     pub tracking_id: Option<Bytes>,
+    /// Milestones for milestone-based payment releases
+    pub milestones: Vec<Milestone>,
+    /// Time-lock configuration for auto-release
+    pub time_lock: Option<TimeLock>,
+    /// Group buy configuration for multi-buyer escrows
+    pub group_buy: Option<GroupBuy>,
 }
 
 /// Number of ledgers after creation within which an escrow must be funded.
 /// After this window, anyone may call `cancel_unfunded` to remove it.
 /// ~7 days at ~5s per ledger: 7 * 24 * 3600 / 5 = 120_960 ledgers.
 pub const UNFUNDED_EXPIRY_LEDGERS: u32 = 120_960;
+
+/// Milestone for milestone-based payment releases
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Milestone {
+    /// Description of the milestone
+    pub description: Bytes,
+    /// Amount to be released upon milestone completion
+    pub amount: i128,
+    /// Whether this milestone has been completed
+    pub completed: bool,
+    /// Timestamp when milestone was completed (if completed)
+    pub completed_at: Option<u64>,
+}
+
+/// Time-lock configuration for auto-release
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimeLock {
+    /// Ledger sequence number when funds should auto-release
+    pub release_ledger: u32,
+    /// Whether auto-release is enabled
+    pub enabled: bool,
+}
+
+/// Group buy configuration for multi-buyer escrows
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupBuy {
+    /// List of buyers and their contributions
+    pub buyers: Vec<BuyerContribution>,
+    /// Total amount needed
+    pub target_amount: i128,
+    /// Current amount funded
+    pub funded_amount: i128,
+    /// Deadline ledger for funding
+    pub funding_deadline: u32,
+}
+
+/// Individual buyer contribution in a group buy
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BuyerContribution {
+    /// Buyer address
+    pub buyer: Address,
+    /// Amount contributed
+    pub amount: i128,
+    /// Whether this buyer has funded their contribution
+    pub funded: bool,
+}
 
 #[contractevent(topics = ["escrow_expired"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -294,10 +353,55 @@ pub struct BulkEscrowCreatedEvent {
     pub buyer: Address,
     pub token: Address,
     pub escrow_ids: Vec<u64>,
+}
+
 #[contractevent(topics = ["fee_exemption"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeExemptionEvent {
     pub address: Address,
     pub exempted: bool,
     pub actor: Address,
+}
+
+#[contractevent(topics = ["milestone_completed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MilestoneCompletedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub milestone_index: u32,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["time_lock_released"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TimeLockReleasedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["group_buy_funded"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupBuyFundedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["group_buy_completed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GroupBuyCompletedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub total_amount: i128,
+}
+
+#[contractevent(topics = ["batch_fees_collected"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchFeesCollectedEvent {
+    pub collector: Address,
+    pub token: Address,
+    pub total_amount: i128,
+    pub escrow_count: u32,
 }

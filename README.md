@@ -303,8 +303,13 @@ The contract now emits Soroban `#[contractevent]` events using compact `vec` pay
 |---|---|---|---|
 | `EscrowCreatedEvent` | `("escrow_created", escrow_id)` | `[buyer, seller, token, amount, status, arbiter]` | `create_escrow` |
 | `FundsReleasedEvent` | `("funds_released", escrow_id)` | `[amount]` | `release_escrow` |
+| `FeeCollectedEvent` | `("fee_collected", escrow_id)` | `[fee_collector, fee]` | `release_escrow` or `verify_delivery` |
+| `FeesWithdrawnEvent` | `("fees_withdrawn", collector, token)` | `[amount]` | `withdraw_fees` |
 | `StatusChangeEvent` | `("status_change", escrow_id)` | `[from_status, to_status, actor]` | Every implemented escrow status transition |
 | `FeeChangedEvent` | `("fee_changed")` | `[old_fee_bps, new_fee_bps, actor]` | `set_fee_percentage` |
+| `FeeCollectorRotatedEvent` | `("fee_collector_rotated")` | `[old_collector, new_collector, actor]` | `set_fee_collector` |
+| `FeeCapsChangedEvent` | `("fee_caps_changed")` | `[old_min_fee, new_min_fee, old_max_fee, new_max_fee, actor]` | `set_fee_caps` |
+| `FeeExemptionEvent` | `("fee_exemption")` | `[address, exempted, actor]` | `add_fee_whitelist` / `remove_fee_whitelist` |
 | `CancellationProposedEvent` | `("cancellation_proposed", escrow_id)` | `[actor]` | `propose_cancellation` |
 
 `StatusChangeEvent` is the canonical lifecycle stream. Every implemented escrow status mutation now emits it, including dispute resolution.
@@ -321,12 +326,24 @@ Recommended indexer flow:
 4. Append `escrow_id` to off-chain lookup tables keyed by `buyer` and `seller`.
 5. Optionally maintain an arbiter lookup table when `arbiter` is present.
 6. On `StatusChangeEvent`, update the escrow status and move the escrow between active and terminal views.
+7. On `FeeCollectorRotatedEvent`, update treasury routing in the indexer cache so fee accounting stays aligned with the live collector.
 
 This schema provides everything needed for user escrow lists without an on-chain reverse index:
 
 - `EscrowCreatedEvent` supplies the user addresses, escrow ID, token, amount, initial status, and arbiter.
 - `StatusChangeEvent` supplies the full transition history needed to keep active/completed views current.
+- `FeeCollectedEvent` and `FeesWithdrawnEvent` provide fee accounting for treasury dashboards.
+- `FeeCollectorRotatedEvent` gives indexers a clean cutover signal when treasury addresses change.
 - If a detail page needs optional metadata, the indexer can fetch `get_escrow` or `get_escrow_metadata` once and cache it off-chain instead of paying to include metadata in every event.
+
+## Storage Rent & Resource Profile
+
+The contract exposes two read-only helpers for sizing and load-planning:
+
+- `estimate_storage_rent(escrow_id)` returns the approximate persistent footprint for an escrow, including companion milestone, time-lock, and group-buy entries when present.
+- `get_resource_profile()` returns the contract's bounded size limits so off-chain load tests can target worst-case payloads without hard-coding constants.
+
+These helpers are intentionally conservative. They report serialized footprint and contract ceilings, not the live network rent price. Integrators should combine the returned byte counts with current Soroban fee parameters when they need an XLM estimate.
 
 ## TTL Maintenance
 
@@ -339,7 +356,7 @@ Persistent entries on Soroban expire unless their TTL is extended. The contract 
 
 ## Current Implementation Notes
 
-The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `resolve_dispute`, pause/unpause, fee updates, and `bump_escrow`.
+The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `resolve_dispute`, pause/unpause, fee updates, fee-collector rotation, storage rent estimation, and `bump_escrow`.
 
 `release_partial`, `refund_escrow`, and broader pending-state transitions are still placeholders and should not yet be treated as production-ready flows.
 

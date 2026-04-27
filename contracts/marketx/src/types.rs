@@ -237,6 +237,14 @@ pub struct FeeCollectedEvent {
     pub fee: i128,
 }
 
+#[contractevent(topics = ["fee_collector_rotated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectorRotatedEvent {
+    pub old_collector: Address,
+    pub new_collector: Address,
+    pub actor: Address,
+}
+
 #[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeesWithdrawnEvent {
@@ -416,6 +424,26 @@ pub struct BatchFeesCollectedEvent {
     pub token: Address,
     pub total_amount: i128,
     pub escrow_count: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageRentEstimate {
+    pub escrow_id: u64,
+    pub entry_count: u32,
+    pub estimated_bytes: u32,
+    pub max_ttl: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractResourceProfile {
+    pub max_items_per_escrow: u32,
+    pub max_metadata_size: u32,
+    pub unfunded_expiry_ledgers: u32,
+    pub evidence_window_ledgers: u32,
+    pub appeal_window_ledgers: u32,
+    pub max_ttl: u32,
 }
 
 // ─── Dispute Resolution V2 types ─────────────────────────────────────────────

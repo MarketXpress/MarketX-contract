@@ -98,20 +98,58 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, BatchFeesCollectedEvent, BulkEscrowCreatedEvent, BulkEscrowRequest,
-    BuyerContribution, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
-    EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeExemptionEvent,
-    FeesWithdrawnEvent, FundsReleasedEvent, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
-    Milestone, MilestoneCompletedEvent, RefundHistoryEntry, RefundReason, RefundRequest,
-    RefundRequestedEvent, RefundStatus, StatusChangeEvent, TimeLock, TimeLockReleasedEvent,
-    MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
-    // Dispute Resolution V2 (#201-204)
-    APPEAL_WINDOW_LEDGERS, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
-    ArbiterStake, ArbiterStakedEvent, ArbiterSlashedEvent,
-    EvidenceWindow, EvidenceSubmittedEvent, EvidenceWindowExpiredEvent,
-    AppealRecord, AppealFiledEvent, AppealResolvedEvent,
+    AdminTransferredEvent,
+    AppealFiledEvent,
+    AppealRecord,
+    AppealResolvedEvent,
     ArbiterReputation,
+    ArbiterSlashedEvent,
+    ArbiterStake,
+    ArbiterStakedEvent,
+    BatchFeesCollectedEvent,
+    BulkEscrowCreatedEvent,
+    BulkEscrowRequest,
+    BuyerContribution,
+    CancellationProposedEvent,
+    ContractResourceProfile,
+    CounterEvidenceSubmittedEvent,
+    DataKey,
+    DeliveryVerifiedEvent,
+    Escrow,
+    EscrowCreatedEvent,
+    EscrowExpiredEvent,
+    EscrowItem,
+    EscrowStatus,
+    EvidenceSubmittedEvent,
+    EvidenceWindow,
+    EvidenceWindowExpiredEvent,
+    FeeCapsChangedEvent,
+    FeeChangedEvent,
+    FeeCollectedEvent,
+    FeeCollectorRotatedEvent,
+    FeeExemptionEvent,
+    FeesWithdrawnEvent,
+    FundsReleasedEvent,
+    GroupBuy,
+    GroupBuyCompletedEvent,
+    GroupBuyFundedEvent,
+    Milestone,
+    MilestoneCompletedEvent,
+    RefundHistoryEntry,
+    RefundReason,
+    RefundRequest,
+    RefundRequestedEvent,
+    RefundStatus,
+    StatusChangeEvent,
+    StorageRentEstimate,
+    TimeLock,
+    TimeLockReleasedEvent,
+    // Dispute Resolution V2 (#201-204)
+    APPEAL_WINDOW_LEDGERS,
+    DEFAULT_EVIDENCE_WINDOW_LEDGERS,
+    MAX_ITEMS_PER_ESCROW,
+    MAX_METADATA_SIZE,
+    UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -288,6 +326,14 @@ impl Contract {
         let key = DataKey::PendingFee(collector.clone(), token.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + amount));
+    }
+
+    fn xdr_len<T: ToXdr>(env: &Env, value: T) -> u32 {
+        value.to_xdr(env).len() as u32
+    }
+
+    fn storage_entry_bytes<K: ToXdr, V: ToXdr>(env: &Env, key: K, value: V) -> u32 {
+        Self::xdr_len(env, key).saturating_add(Self::xdr_len(env, value))
     }
 }
 
@@ -547,7 +593,9 @@ impl Contract {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
 
-        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items, None)
+        Self::create_escrow_internal(
+            env, buyer, seller, token, amount, metadata, arbiter, items, None,
+        )
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
@@ -663,6 +711,90 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    /// Estimate the persistent storage footprint for a specific escrow.
+    ///
+    /// The returned byte count is an approximation based on the XDR size of
+    /// the escrow record and its companion entries.
+    pub fn estimate_storage_rent(
+        env: Env,
+        escrow_id: u64,
+    ) -> Result<StorageRentEstimate, ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        let mut entry_count: u32 = 1;
+        let mut estimated_bytes: u32 =
+            Self::storage_entry_bytes(&env, DataKey::Escrow(escrow_id), escrow.clone());
+
+        let hash =
+            Self::generate_escrow_hash(&env, &escrow.buyer, &escrow.seller, &escrow.metadata);
+        let hash_key = DataKey::EscrowHash(hash);
+        estimated_bytes =
+            estimated_bytes.saturating_add(Self::storage_entry_bytes(&env, hash_key, escrow_id));
+        entry_count = entry_count.saturating_add(1);
+
+        if let Some(milestones) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Vec<Milestone>>(&DataKey::MilestoneEscrow(escrow_id))
+        {
+            estimated_bytes = estimated_bytes.saturating_add(Self::storage_entry_bytes(
+                &env,
+                DataKey::MilestoneEscrow(escrow_id),
+                milestones,
+            ));
+            entry_count = entry_count.saturating_add(1);
+        }
+
+        if let Some(time_lock) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, TimeLock>(&DataKey::TimeLockEscrow(escrow_id))
+        {
+            estimated_bytes = estimated_bytes.saturating_add(Self::storage_entry_bytes(
+                &env,
+                DataKey::TimeLockEscrow(escrow_id),
+                time_lock,
+            ));
+            entry_count = entry_count.saturating_add(1);
+        }
+
+        if let Some(group_buy) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, GroupBuy>(&DataKey::GroupBuyEscrow(escrow_id))
+        {
+            estimated_bytes = estimated_bytes.saturating_add(Self::storage_entry_bytes(
+                &env,
+                DataKey::GroupBuyEscrow(escrow_id),
+                group_buy,
+            ));
+            entry_count = entry_count.saturating_add(1);
+        }
+
+        Ok(StorageRentEstimate {
+            escrow_id,
+            entry_count,
+            estimated_bytes,
+            max_ttl: env.storage().max_ttl(),
+        })
+    }
+
+    /// Snapshot the contract's bounded resource limits for off-chain load tests.
+    pub fn get_resource_profile(env: Env) -> ContractResourceProfile {
+        ContractResourceProfile {
+            max_items_per_escrow: MAX_ITEMS_PER_ESCROW,
+            max_metadata_size: MAX_METADATA_SIZE,
+            unfunded_expiry_ledgers: UNFUNDED_EXPIRY_LEDGERS,
+            evidence_window_ledgers: DEFAULT_EVIDENCE_WINDOW_LEDGERS,
+            appeal_window_ledgers: APPEAL_WINDOW_LEDGERS,
+            max_ttl: env.storage().max_ttl(),
+        }
+    }
+
     pub fn set_oracle(env: Env, oracle: Address) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Oracle, &oracle);
@@ -694,17 +826,20 @@ impl Contract {
             return Err(ContractError::InvalidEscrowState);
         }
 
-        let tracking_id = escrow.tracking_id.clone().ok_or(ContractError::Unauthorized)?;
+        let tracking_id = escrow
+            .tracking_id
+            .clone()
+            .ok_or(ContractError::Unauthorized)?;
 
         // Oracle verified delivery, release funds
         let from_status = escrow.status.clone();
-        
+
         // Use Oracle as actor for status change
         let actor = oracle.clone();
-        
+
         // Core release logic (duplicated from release_escrow for now to avoid complex refactor in this turn, or I can refactor it)
         // Actually, let's try to keep it simple.
-        
+
         let mut fee_bps: u32 = env
             .storage()
             .persistent()
@@ -726,30 +861,68 @@ impl Contract {
         }
 
         let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-        let min_fee: i128 = env.storage().persistent().get(&DataKey::MinFee).unwrap_or(0);
-        let max_fee: i128 = env.storage().persistent().get(&DataKey::MaxFee).unwrap_or(0);
+        let min_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MinFee)
+            .unwrap_or(0);
+        let max_fee: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MaxFee)
+            .unwrap_or(0);
 
-        if fee < min_fee { fee = min_fee; }
-        if max_fee > 0 && fee > max_fee { fee = max_fee; }
-        if fee > escrow.amount { fee = escrow.amount; }
+        if fee < min_fee {
+            fee = min_fee;
+        }
+        if max_fee > 0 && fee > max_fee {
+            fee = max_fee;
+        }
+        if fee > escrow.amount {
+            fee = escrow.amount;
+        }
 
         let seller_amount = escrow.amount - fee;
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
-        token_client.transfer(&env.current_contract_address(), &escrow.seller, &seller_amount);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.seller,
+            &seller_amount,
+        );
 
         if fee > 0 {
-            let fee_collector: Address = env.storage().persistent().get(&DataKey::FeeCollector).ok_or(ContractError::InvalidFeeConfig)?;
+            let fee_collector: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::FeeCollector)
+                .ok_or(ContractError::InvalidFeeConfig)?;
             Self::add_pending_fee(&env, fee_collector.clone(), escrow.token.clone(), fee);
             Self::add_i128(&env, DataKey::TotalFeesCollected, fee);
-            FeeCollectedEvent { escrow_id, fee_collector, fee }.publish(&env);
+            FeeCollectedEvent {
+                escrow_id,
+                fee_collector,
+                fee,
+            }
+            .publish(&env);
         }
 
         escrow.status = EscrowStatus::Released;
         escrow.cancellation_proposer = None;
-        env.storage().persistent().set(&DataKey::Escrow(escrow_id), &escrow);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        FundsReleasedEvent { escrow_id, amount: escrow.amount, fee }.publish(&env);
-        DeliveryVerifiedEvent { escrow_id, tracking_id }.publish(&env);
+        FundsReleasedEvent {
+            escrow_id,
+            amount: escrow.amount,
+            fee,
+        }
+        .publish(&env);
+        DeliveryVerifiedEvent {
+            escrow_id,
+            tracking_id,
+        }
+        .publish(&env);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
 
         Self::add_i128(&env, DataKey::TotalReleasedAmount, escrow.amount);
@@ -831,7 +1004,7 @@ impl Contract {
             .persistent()
             .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
             .unwrap_or(false);
-        
+
         let mut fee_bps: u32 = env
             .storage()
             .persistent()
@@ -1347,7 +1520,7 @@ impl Contract {
             escrow.status = EscrowStatus::Released;
 
             escrow.cancellation_proposer = None;
-            
+
             let current_released_total: i128 = env
                 .storage()
                 .persistent()
@@ -1394,7 +1567,13 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-        Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor.clone());
+        Self::emit_status_change(
+            &env,
+            escrow_id,
+            from_status,
+            escrow.status.clone(),
+            actor.clone(),
+        );
 
         // #204: record resolution in arbiter reputation
         if let Some(arbiter) = &escrow.arbiter {
@@ -1417,13 +1596,18 @@ impl Contract {
     pub fn set_min_arbiter_stake(env: Env, amount: i128) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         assert!(amount >= 0, "min stake must be non-negative");
-        env.storage().persistent().set(&DataKey::MinArbiterStake, &amount);
+        env.storage()
+            .persistent()
+            .set(&DataKey::MinArbiterStake, &amount);
         Ok(())
     }
 
     /// Get the current minimum arbiter stake (returns 0 if not configured).
     pub fn get_min_arbiter_stake(env: Env) -> i128 {
-        env.storage().persistent().get(&DataKey::MinArbiterStake).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&DataKey::MinArbiterStake)
+            .unwrap_or(0)
     }
 
     /// Arbiter stakes tokens to gain the authority to resolve the given disputed
@@ -1454,7 +1638,9 @@ impl Contract {
         }
 
         match &escrow.arbiter {
-            Some(registered) if *registered != arbiter => return Err(ContractError::ArbiterMismatch),
+            Some(registered) if *registered != arbiter => {
+                return Err(ContractError::ArbiterMismatch)
+            }
             None => return Err(ContractError::ArbiterMismatch),
             _ => {}
         }
@@ -1492,7 +1678,12 @@ impl Contract {
         // Update reputation
         Self::increment_arbiter_disputes(&env, &arbiter);
 
-        ArbiterStakedEvent { escrow_id, arbiter, amount }.publish(&env);
+        ArbiterStakedEvent {
+            escrow_id,
+            arbiter,
+            amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -1568,19 +1759,19 @@ impl Contract {
 
         // Update arbiter reputation
         let rep_key = DataKey::ArbiterReputation(stake.arbiter.clone());
-        let mut rep: ArbiterReputation = env
-            .storage()
-            .persistent()
-            .get(&rep_key)
-            .unwrap_or(ArbiterReputation {
-                arbiter: stake.arbiter.clone(),
-                total_disputes: 0,
-                resolved_disputes: 0,
-                appealed_rulings: 0,
-                overturned_rulings: 0,
-                slash_count: 0,
-                last_active: 0,
-            });
+        let mut rep: ArbiterReputation =
+            env.storage()
+                .persistent()
+                .get(&rep_key)
+                .unwrap_or(ArbiterReputation {
+                    arbiter: stake.arbiter.clone(),
+                    total_disputes: 0,
+                    resolved_disputes: 0,
+                    appealed_rulings: 0,
+                    overturned_rulings: 0,
+                    slash_count: 0,
+                    last_active: 0,
+                });
         rep.slash_count += 1;
         rep.last_active = env.ledger().sequence();
         env.storage().persistent().set(&rep_key, &rep);
@@ -1824,21 +2015,28 @@ impl Contract {
         if let Some(arbiter) = &escrow.arbiter {
             let rep_key = DataKey::ArbiterReputation(arbiter.clone());
             let mut rep: ArbiterReputation =
-                env.storage().persistent().get(&rep_key).unwrap_or(ArbiterReputation {
-                    arbiter: arbiter.clone(),
-                    total_disputes: 0,
-                    resolved_disputes: 0,
-                    appealed_rulings: 0,
-                    overturned_rulings: 0,
-                    slash_count: 0,
-                    last_active: 0,
-                });
+                env.storage()
+                    .persistent()
+                    .get(&rep_key)
+                    .unwrap_or(ArbiterReputation {
+                        arbiter: arbiter.clone(),
+                        total_disputes: 0,
+                        resolved_disputes: 0,
+                        appealed_rulings: 0,
+                        overturned_rulings: 0,
+                        slash_count: 0,
+                        last_active: 0,
+                    });
             rep.appealed_rulings += 1;
             rep.last_active = now;
             env.storage().persistent().set(&rep_key, &rep);
         }
 
-        AppealFiledEvent { escrow_id, appellant }.publish(&env);
+        AppealFiledEvent {
+            escrow_id,
+            appellant,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -1907,8 +2105,11 @@ impl Contract {
         if overturned {
             if let Some(arbiter) = &escrow.arbiter {
                 let rep_key = DataKey::ArbiterReputation(arbiter.clone());
-                let mut rep: ArbiterReputation =
-                    env.storage().persistent().get(&rep_key).unwrap_or(ArbiterReputation {
+                let mut rep: ArbiterReputation = env
+                    .storage()
+                    .persistent()
+                    .get(&rep_key)
+                    .unwrap_or(ArbiterReputation {
                         arbiter: arbiter.clone(),
                         total_disputes: 0,
                         resolved_disputes: 0,
@@ -1953,19 +2154,19 @@ impl Contract {
     /// Internal: increment total_disputes counter for an arbiter.
     fn increment_arbiter_disputes(env: &Env, arbiter: &Address) {
         let key = DataKey::ArbiterReputation(arbiter.clone());
-        let mut rep: ArbiterReputation = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(ArbiterReputation {
-                arbiter: arbiter.clone(),
-                total_disputes: 0,
-                resolved_disputes: 0,
-                appealed_rulings: 0,
-                overturned_rulings: 0,
-                slash_count: 0,
-                last_active: 0,
-            });
+        let mut rep: ArbiterReputation =
+            env.storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or(ArbiterReputation {
+                    arbiter: arbiter.clone(),
+                    total_disputes: 0,
+                    resolved_disputes: 0,
+                    appealed_rulings: 0,
+                    overturned_rulings: 0,
+                    slash_count: 0,
+                    last_active: 0,
+                });
         rep.total_disputes += 1;
         rep.last_active = env.ledger().sequence();
         env.storage().persistent().set(&key, &rep);
@@ -1974,19 +2175,19 @@ impl Contract {
     /// Internal: mark a dispute as resolved in the arbiter's reputation record.
     fn record_arbiter_resolution(env: &Env, arbiter: &Address) {
         let key = DataKey::ArbiterReputation(arbiter.clone());
-        let mut rep: ArbiterReputation = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or(ArbiterReputation {
-                arbiter: arbiter.clone(),
-                total_disputes: 0,
-                resolved_disputes: 0,
-                appealed_rulings: 0,
-                overturned_rulings: 0,
-                slash_count: 0,
-                last_active: 0,
-            });
+        let mut rep: ArbiterReputation =
+            env.storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or(ArbiterReputation {
+                    arbiter: arbiter.clone(),
+                    total_disputes: 0,
+                    resolved_disputes: 0,
+                    appealed_rulings: 0,
+                    overturned_rulings: 0,
+                    slash_count: 0,
+                    last_active: 0,
+                });
         rep.resolved_disputes += 1;
         rep.last_active = env.ledger().sequence();
         env.storage().persistent().set(&key, &rep);
@@ -2148,6 +2349,40 @@ impl Contract {
         env.storage().persistent().get(&DataKey::NativeAsset)
     }
 
+    /// Get the currently configured fee collector.
+    pub fn get_fee_collector(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::FeeCollector)
+    }
+
+    /// Rotate the fee collector to a new treasury address.
+    ///
+    /// This is admin-controlled and only affects future fee accruals.
+    pub fn set_fee_collector(env: Env, fee_collector: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        let old_collector: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::FeeCollector)
+            .ok_or(ContractError::InvalidFeeConfig)?;
+
+        if old_collector == fee_collector {
+            return Ok(());
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeeCollector, &fee_collector);
+
+        FeeCollectorRotatedEvent {
+            old_collector,
+            new_collector: fee_collector,
+            actor: admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     pub fn get_min_fee(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -2168,7 +2403,12 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::FeeWhitelist(address.clone()), &true);
-        FeeExemptionEvent { address, exempted: true, actor: admin }.publish(&env);
+        FeeExemptionEvent {
+            address,
+            exempted: true,
+            actor: admin,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2178,7 +2418,12 @@ impl Contract {
         env.storage()
             .persistent()
             .remove(&DataKey::FeeWhitelist(address.clone()));
-        FeeExemptionEvent { address, exempted: false, actor: admin }.publish(&env);
+        FeeExemptionEvent {
+            address,
+            exempted: false,
+            actor: admin,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2209,7 +2454,11 @@ impl Contract {
     ///
     /// This follows the pull pattern for revenue sharing, allowing collectors
     /// to claim their fees at their convenience.
-    pub fn withdraw_fees(env: Env, collector: Address, token: Address) -> Result<(), ContractError> {
+    pub fn withdraw_fees(
+        env: Env,
+        collector: Address,
+        token: Address,
+    ) -> Result<(), ContractError> {
         collector.require_auth();
 
         let key = DataKey::PendingFee(collector.clone(), token.clone());
@@ -2290,8 +2539,16 @@ impl Contract {
                     .unwrap_or(0);
 
                 let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-                let min_fee: i128 = env.storage().persistent().get(&DataKey::MinFee).unwrap_or(0);
-                let max_fee: i128 = env.storage().persistent().get(&DataKey::MaxFee).unwrap_or(0);
+                let min_fee: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::MinFee)
+                    .unwrap_or(0);
+                let max_fee: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::MaxFee)
+                    .unwrap_or(0);
 
                 if fee < min_fee {
                     fee = min_fee;
@@ -2643,7 +2900,11 @@ impl Contract {
         }
 
         // Use first buyer as primary buyer for escrow creation
-        let primary_buyer = buyers.get(0).ok_or(ContractError::InvalidGroupBuyAmount)?.buyer.clone();
+        let primary_buyer = buyers
+            .get(0)
+            .ok_or(ContractError::InvalidGroupBuyAmount)?
+            .buyer
+            .clone();
         primary_buyer.require_auth();
 
         let escrow_id = Self::create_escrow_internal(

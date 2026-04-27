@@ -289,6 +289,31 @@ impl Contract {
         escrow.cancellation_proposer = None;
     }
 
+    fn extend_instance_ttl(env: &Env) {
+        let max_ttl = env.storage().max_ttl();
+        
+        // Only extend TTL for keys that exist
+        let keys_to_extend = [
+            DataKey::Admin,
+            DataKey::FeeCollector,
+            DataKey::FeeBps,
+            DataKey::Paused,
+            DataKey::EscrowCounter,
+            DataKey::RefundCount,
+            DataKey::TotalFundedAmount,
+            DataKey::TotalRefundedAmount,
+            DataKey::TotalDisputedCount,
+            DataKey::TotalFeesCollected,
+            DataKey::TotalReleasedAmount,
+        ];
+        
+        for key in keys_to_extend.iter() {
+            if env.storage().persistent().has(key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(key, max_ttl, max_ttl);
+            }
+        }
     fn add_pending_fee(env: &Env, collector: Address, token: Address, amount: i128) {
         if amount <= 0 {
             return;
@@ -458,6 +483,7 @@ impl Contract {
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
+        Self::extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -477,6 +503,7 @@ impl Contract {
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
+        Self::extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -1771,6 +1798,7 @@ impl Contract {
         }
 
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+        Self::extend_instance_ttl(&env);
 
         FeeChangedEvent {
             old_fee_bps,

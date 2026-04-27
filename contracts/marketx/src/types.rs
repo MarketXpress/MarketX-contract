@@ -56,7 +56,6 @@ pub enum DataKey {
     TotalRefundedAmount,
     TotalDisputedCount,
     TotalFeesCollected,
-    EscrowIds,
 
 TotalReleasedAmount,
     PendingFee(Address, Address),

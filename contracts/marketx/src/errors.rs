@@ -23,4 +23,7 @@ pub enum ContractError {
 EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
     FeeCalculationOverflow = 100,
+    ZeroAddress = 100,
+    MetadataAccessDenied = 61,
+    ReentrancyForbidden = 100,
 }

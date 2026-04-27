@@ -272,7 +272,9 @@ impl Contract {
         );
 
         Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
-        escrow.status = EscrowStatus::Refunded;
+        Self::add_u32(env, DataKey::TotalDisputedCount);
+        Self::add_i128(env, DataKey::TotalFeesCollected, 0);
+        Self::add_i128(env, DataKey::TotalReleasedAmount, 0);
         escrow.cancellation_proposer = None;
     }
 }

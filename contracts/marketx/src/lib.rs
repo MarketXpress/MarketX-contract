@@ -102,11 +102,7 @@ pub use types::{
     EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent, FundsReleasedEvent,
     RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
     StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    CancellationProposedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, FeeChangedEvent, FeeCollectedEvent,
-    FundsReleasedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
-    RefundStatus, StatusChangeEvent, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    CancellationProposedEvent, EscrowExpiredEvent, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -275,6 +271,33 @@ impl Contract {
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
     }
+
+    fn extend_instance_ttl(env: &Env) {
+        let max_ttl = env.storage().max_ttl();
+        
+        // Only extend TTL for keys that exist
+        let keys_to_extend = [
+            DataKey::Admin,
+            DataKey::FeeCollector,
+            DataKey::FeeBps,
+            DataKey::Paused,
+            DataKey::EscrowCounter,
+            DataKey::RefundCount,
+            DataKey::TotalFundedAmount,
+            DataKey::TotalRefundedAmount,
+            DataKey::TotalDisputedCount,
+            DataKey::TotalFeesCollected,
+            DataKey::TotalReleasedAmount,
+        ];
+        
+        for key in keys_to_extend.iter() {
+            if env.storage().persistent().has(key) {
+                env.storage()
+                    .persistent()
+                    .extend_ttl(key, max_ttl, max_ttl);
+            }
+        }
+    }
 }
 
 #[contractimpl]
@@ -340,6 +363,7 @@ impl Contract {
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
+        Self::extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -359,6 +383,7 @@ impl Contract {
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
+        Self::extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -1107,8 +1132,6 @@ impl Contract {
         };
         let from_status = escrow.status.clone();
 
-        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
-
         if resolution == 0 {
             // Release to seller
             let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
@@ -1245,6 +1268,7 @@ impl Contract {
         }
 
         env.storage().persistent().set(&DataKey::FeeBps, &fee_bps);
+        Self::extend_instance_ttl(&env);
 
         FeeChangedEvent {
             old_fee_bps,

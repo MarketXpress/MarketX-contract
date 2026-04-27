@@ -2262,15 +2262,20 @@ fn test_non_whitelisted_buyer_pays_fee() {
     let token = soroban_sdk::token::Client::new(&env, &token_id.address());
 
     env.mock_all_auths();
-    client.initialize(&admin, &collector, &250, &0, &0);
+    // min fee 1000, but escrow only has 500
+    client.initialize(&admin, &collector, &500, &1000, &2000);
+
+    token_admin.mint(&client.address, &500);
+    // Initialize with 2.5% fee (250 bps)
+    // client.initialize(&admin, &collector, &250, &0, &0);
 
     token_admin.mint(&client.address, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,
-        &token_id.address(),
-        &1000,
+        &token_id.address(, &None),
+        &500,
         &None,
         &None,
         &None,
@@ -2294,6 +2299,28 @@ fn test_non_whitelisted_buyer_pays_fee() {
 
     // Pending fee should be 0
     assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
+
+    let xlm_sac = env.register_stellar_asset_contract_v2(admin.clone());
+    let xlm_address = xlm_sac.address();
+    let xlm_admin = soroban_sdk::token::StellarAssetClient::new(&env, &xlm_address);
+    let xlm_token = soroban_sdk::token::Client::new(&env, &xlm_address);
+
+    env.mock_all_auths();
+    // 250 bps = 2.5% fee
+    client.initialize(&admin, &admin, &250, &0, &0);
+
+    let amount: i128 = 10_000;
+    xlm_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None, &None, &None);
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    let expected_fee: i128 = amount * 250 / 10_000; // 250
+    let expected_seller: i128 = amount - expected_fee; // 9_750
+
+    assert_eq!(xlm_token.balance(&seller), expected_seller);
+    assert_eq!(xlm_token.balance(&admin), expected_fee);
 }
 
 #[test]

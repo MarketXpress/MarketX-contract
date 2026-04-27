@@ -98,6 +98,11 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
+    CONTRACT_VERSION,
+    ContractVersion,
+    MAX_DESCRIPTION_SIZE,
+    MAX_TRACKING_ID_SIZE,
+    MAX_EVIDENCE_HASH_SIZE,
     AdminTransferredEvent,
     AppealFiledEvent,
     AppealRecord,
@@ -237,6 +242,13 @@ impl Contract {
             if data.len() > MAX_METADATA_SIZE {
                 return Err(ContractError::MetadataTooLarge);
             }
+        }
+        Ok(())
+    }
+
+    fn validate_bytes_size(data: &Bytes, max: u32) -> Result<(), ContractError> {
+        if data.len() > max {
+            return Err(ContractError::MetadataTooLarge);
         }
         Ok(())
     }
@@ -465,6 +477,10 @@ impl Contract {
     ) -> Result<u64, ContractError> {
         Self::validate_metadata(&metadata)?;
 
+        if let Some(ref tid) = tracking_id {
+            Self::validate_bytes_size(tid, MAX_TRACKING_ID_SIZE)?;
+        }
+
         if amount <= 0 {
             return Err(ContractError::InvalidEscrowAmount);
         }
@@ -483,6 +499,13 @@ impl Contract {
                 let items_sum: i128 = items_vec.iter().map(|item| item.amount).sum();
                 if items_sum != amount {
                     return Err(ContractError::ItemAmountInvalid);
+                }
+
+                // Validate per-item descriptions
+                for item in items_vec.iter() {
+                    if let Some(ref desc) = item.description {
+                        Self::validate_bytes_size(desc, MAX_DESCRIPTION_SIZE)?;
+                    }
                 }
 
                 items_vec
@@ -792,6 +815,16 @@ impl Contract {
             evidence_window_ledgers: DEFAULT_EVIDENCE_WINDOW_LEDGERS,
             appeal_window_ledgers: APPEAL_WINDOW_LEDGERS,
             max_ttl: env.storage().max_ttl(),
+        }
+    }
+
+    /// Return the semantic version of this contract deployment.
+    /// Callers can compare against `CONTRACT_VERSION` to verify compatibility.
+    pub fn get_version(_env: Env) -> ContractVersion {
+        ContractVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
         }
     }
 
@@ -1321,6 +1354,8 @@ impl Contract {
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         initiator.require_auth();
+
+        Self::validate_bytes_size(&evidence_hash, MAX_EVIDENCE_HASH_SIZE)?;
 
         let mut escrow: Escrow = env
             .storage()
@@ -1860,6 +1895,8 @@ impl Contract {
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         party.require_auth();
+
+        Self::validate_bytes_size(&evidence_hash, MAX_EVIDENCE_HASH_SIZE)?;
 
         let escrow: Escrow = env
             .storage()
@@ -2612,6 +2649,11 @@ impl Contract {
         let milestone_sum: i128 = milestones.iter().map(|m| m.amount).sum();
         if milestone_sum != amount {
             return Err(ContractError::ItemAmountInvalid);
+        }
+
+        // Validate milestone descriptions
+        for m in milestones.iter() {
+            Self::validate_bytes_size(&m.description, MAX_DESCRIPTION_SIZE)?;
         }
 
         let escrow_id = Self::create_escrow_internal(

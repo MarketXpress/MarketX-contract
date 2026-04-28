@@ -77,6 +77,10 @@ pub enum DataKey {
     Appeal(u64),
     /// Cumulative on-chain reputation for an arbiter address (#204).
     ArbiterReputation(Address),
+    /// Governance feature flag: enable/disable dispute lifecycle.
+    FeatureDisputesEnabled,
+    /// Governance feature flag: enable/disable partial releases (`release_item`/`release_partial`).
+    FeaturePartialReleasesEnabled,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;

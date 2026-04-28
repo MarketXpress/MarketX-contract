@@ -97,6 +97,10 @@ pub enum DataKey {
     FeatureDisputesEnabled,
     /// Governance feature flag: enable/disable partial releases (`release_item`/`release_partial`).
     FeaturePartialReleasesEnabled,
+    /// Mediation phase record for a disputed escrow (#205).
+    MediationPhase(u64),
+    /// Token-specific circuit breaker: paused tokens (#215).
+    TokenPaused(Address),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -632,4 +636,66 @@ pub struct Escrow {
     pub time_lock: Vec<TimeLock>,
     /// Group buy configuration for multi-buyer escrows (Vec of 0 or 1 element)
     pub group_buy: Vec<GroupBuy>,
+}
+
+// ─── Issue #205: Dispute Mediation Phase ─────────────────────────────────────
+
+/// Default mediation window length in ledgers (~48 hours at 5 s/ledger).
+pub const DEFAULT_MEDIATION_WINDOW_LEDGERS: u32 = 34_560;
+
+/// Mediation phase record for a disputed escrow (#205).
+///
+/// When a dispute is raised, a mediation window opens before the arbiter can
+/// act. During this window both parties may propose a settlement. If they
+/// agree, the escrow is resolved without arbiter involvement.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediationPhase {
+    pub escrow_id: u64,
+    /// Ledger at which the mediation window was opened.
+    pub opened_at: u32,
+    /// Ledger after which the arbiter may step in.
+    pub expires_at: u32,
+    /// Settlement amount proposed by the buyer (None = no proposal yet).
+    pub buyer_proposal: Option<i128>,
+    /// Settlement amount proposed by the seller (None = no proposal yet).
+    pub seller_proposal: Option<i128>,
+    /// Whether the mediation phase has concluded (settled or expired).
+    pub concluded: bool,
+}
+
+#[contractevent(topics = ["mediation_opened"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediationOpenedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub expires_at: u32,
+}
+
+#[contractevent(topics = ["mediation_proposed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediationProposedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub proposer: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["mediation_settled"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MediationSettledEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub seller_amount: i128,
+    pub buyer_refund: i128,
+}
+
+// ─── Issue #215: Token-Specific Circuit Breaker ───────────────────────────────
+
+#[contractevent(topics = ["token_circuit_breaker"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenCircuitBreakerEvent {
+    pub token: Address,
+    pub paused: bool,
+    pub actor: Address,
 }

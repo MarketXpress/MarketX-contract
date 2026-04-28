@@ -163,6 +163,20 @@ mod test;
 pub struct Contract;
 
 impl Contract {
+    fn disputes_enabled(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeatureDisputesEnabled)
+            .unwrap_or(true)
+    }
+
+    fn partial_releases_enabled(env: &Env) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeaturePartialReleasesEnabled)
+            .unwrap_or(true)
+    }
+
     fn assert_admin(env: &Env) -> Result<Address, ContractError> {
         let admin = env
             .storage()
@@ -185,6 +199,20 @@ impl Contract {
             return Err(ContractError::ContractPaused);
         }
 
+        Ok(())
+    }
+
+    fn assert_disputes_enabled(env: &Env) -> Result<(), ContractError> {
+        if !Self::disputes_enabled(env) {
+            return Err(ContractError::FeatureDisabled);
+        }
+        Ok(())
+    }
+
+    fn assert_partial_releases_enabled(env: &Env) -> Result<(), ContractError> {
+        if !Self::partial_releases_enabled(env) {
+            return Err(ContractError::FeatureDisabled);
+        }
         Ok(())
     }
 
@@ -446,6 +474,32 @@ impl Contract {
             .persistent()
             .get(&DataKey::Paused)
             .unwrap_or(false)
+    }
+
+    /// Admin-controlled governance toggle for dispute operations.
+    pub fn set_disputes_enabled(env: Env, enabled: bool) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeatureDisputesEnabled, &enabled);
+        Ok(())
+    }
+
+    /// Admin-controlled governance toggle for partial release operations.
+    pub fn set_partial_releases_enabled(env: Env, enabled: bool) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::FeaturePartialReleasesEnabled, &enabled);
+        Ok(())
+    }
+
+    pub fn is_disputes_enabled(env: Env) -> bool {
+        Self::disputes_enabled(&env)
+    }
+
+    pub fn is_partial_releases_enabled(env: Env) -> bool {
+        Self::partial_releases_enabled(&env)
     }
 
     // =========================
@@ -1122,6 +1176,7 @@ impl Contract {
     }
     pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_partial_releases_enabled(&env)?;
         Ok(())
     }
 
@@ -1142,6 +1197,7 @@ impl Contract {
     /// * `ItemAlreadyReleased` - If the item has already been released
     pub fn release_item(env: Env, escrow_id: u64, item_index: u32) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_partial_releases_enabled(&env)?;
 
         // 1. Load and validate the escrow exists
         let mut escrow: Escrow = env
@@ -1320,6 +1376,7 @@ impl Contract {
         evidence_hash: Bytes,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         initiator.require_auth();
 
         let mut escrow: Escrow = env
@@ -1486,6 +1543,7 @@ impl Contract {
     /// `resolution`: 0 = release to seller, 1 = refund to buyer
     pub fn resolve_dispute(env: Env, escrow_id: u64, resolution: u32) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
 
         let mut escrow: Escrow = env
             .storage()
@@ -1625,6 +1683,7 @@ impl Contract {
         amount: i128,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         arbiter.require_auth();
 
         let escrow: Escrow = env
@@ -1714,6 +1773,7 @@ impl Contract {
     /// - `AppealNotFound` if no resolved-and-overturned appeal exists.
     pub fn slash_arbiter(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
+        Self::assert_disputes_enabled(&env)?;
 
         let appeal: AppealRecord = env
             .storage()
@@ -1799,6 +1859,7 @@ impl Contract {
         window_ledgers: u32,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         caller.require_auth();
 
         let escrow: Escrow = env
@@ -1859,6 +1920,7 @@ impl Contract {
         evidence_hash: Bytes,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         party.require_auth();
 
         let escrow: Escrow = env
@@ -1910,6 +1972,7 @@ impl Contract {
     /// (default in favour of buyer when arbiter is absent).
     pub fn expire_evidence_window(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
 
         let mut window: EvidenceWindow = env
             .storage()
@@ -1977,6 +2040,7 @@ impl Contract {
         ruling_ledger: u32,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         appellant.require_auth();
 
         let escrow: Escrow = env
@@ -2051,6 +2115,7 @@ impl Contract {
         resolution: u32,
     ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
         admin.require_auth();
         Self::assert_admin(&env)?;
 
@@ -2206,10 +2271,20 @@ impl Contract {
 
     /// Propose a new admin. The transfer is not complete until the new admin accepts.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), ContractError> {
-        Self::assert_admin(&env)?;
+        let current_admin = Self::assert_admin(&env)?;
+        if new_admin == current_admin {
+            return Err(ContractError::InvalidAdminTransfer);
+        }
         env.storage()
             .persistent()
             .set(&DataKey::ProposedAdmin, &new_admin);
+        Ok(())
+    }
+
+    /// Cancel an in-flight admin transfer proposal.
+    pub fn cancel_admin_transfer(env: Env) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+        env.storage().persistent().remove(&DataKey::ProposedAdmin);
         Ok(())
     }
 
@@ -2246,6 +2321,10 @@ impl Contract {
 
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
+    }
+
+    pub fn get_proposed_admin(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::ProposedAdmin)
     }
 
     pub fn set_fee_percentage(env: Env, fee_bps: u32) -> Result<(), ContractError> {

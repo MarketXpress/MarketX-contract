@@ -60,4 +60,8 @@ pub enum ContractError {
     MetadataAccessDenied = 162,
     /// Address is zero.
     ZeroAddress = 163,
+    /// A governance-controlled feature flag has disabled this operation.
+    FeatureDisabled = 160,
+    /// Invalid admin transfer request (for example, proposing the current admin).
+    InvalidAdminTransfer = 161,
 }

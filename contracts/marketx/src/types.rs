@@ -3,6 +3,18 @@ use soroban_sdk::{contractevent, contracttype, Address, Bytes, BytesN, Vec};
 #[cfg(test)]
 use soroban_sdk::Env;
 
+/// Semantic version of this contract. Matches the `version` field in `Cargo.toml`.
+pub const CONTRACT_VERSION: &str = "1.0.0";
+
+/// On-chain version information returned by `get_version()`.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
 /// Returns the contract address for the native XLM token (Stellar Asset Contract).
 ///
 /// # Example
@@ -81,9 +93,22 @@ pub enum DataKey {
     ClaimableAt(u64),
     /// Metadata visibility setting for an escrow (#165).
     MetadataVisibility(u64),
+    /// Governance feature flag: enable/disable dispute lifecycle.
+    FeatureDisputesEnabled,
+    /// Governance feature flag: enable/disable partial releases (`release_item`/`release_partial`).
+    FeaturePartialReleasesEnabled,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
+
+/// Maximum size for per-item and milestone description fields (bytes).
+pub const MAX_DESCRIPTION_SIZE: u32 = 256;
+
+/// Maximum size for a shipping tracking ID (bytes).
+pub const MAX_TRACKING_ID_SIZE: u32 = 128;
+
+/// Maximum size for an evidence hash (e.g., IPFS CID) submitted during disputes (bytes).
+pub const MAX_EVIDENCE_HASH_SIZE: u32 = 128;
 
 /// Maximum number of items per escrow
 pub const MAX_ITEMS_PER_ESCROW: u32 = 50;
@@ -214,6 +239,14 @@ pub struct FeeCollectedEvent {
     pub escrow_id: u64,
     pub fee_collector: Address,
     pub fee: i128,
+}
+
+#[contractevent(topics = ["fee_collector_rotated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeCollectorRotatedEvent {
+    pub old_collector: Address,
+    pub new_collector: Address,
+    pub actor: Address,
 }
 
 #[contractevent(topics = ["fees_withdrawn"], data_format = "vec")]
@@ -395,6 +428,26 @@ pub struct BatchFeesCollectedEvent {
     pub token: Address,
     pub total_amount: i128,
     pub escrow_count: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageRentEstimate {
+    pub escrow_id: u64,
+    pub entry_count: u32,
+    pub estimated_bytes: u32,
+    pub max_ttl: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractResourceProfile {
+    pub max_items_per_escrow: u32,
+    pub max_metadata_size: u32,
+    pub unfunded_expiry_ledgers: u32,
+    pub evidence_window_ledgers: u32,
+    pub appeal_window_ledgers: u32,
+    pub max_ttl: u32,
 }
 
 // ─── Dispute Resolution V2 types ─────────────────────────────────────────────

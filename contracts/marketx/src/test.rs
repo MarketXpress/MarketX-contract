@@ -754,7 +754,7 @@ fn buyer_can_fund_escrow() {
     assert_eq!(token.balance(&client.address), 1000);
 
     let escrow = client.get_escrow(&escrow_id).unwrap();
-    assert_eq!(escrow.status, crate::types::EscrowStatus::Pending);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Funded);
 }
 
 #[test]
@@ -1067,6 +1067,10 @@ fn test_arbiter_can_resolve_dispute() {
 
     client.resolve_dispute(&escrow_id, &0u32);
 
+    // Advance ledger beyond appeal window
+    env.ledger().with_mut(|l| l.sequence_number += 17281);
+    client.claim_disputed_funds(&escrow_id);
+
     assert_eq!(token.balance(&seller), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
@@ -1162,6 +1166,10 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
     });
 
     client.resolve_dispute(&escrow_id, &1u32);
+
+    // Advance ledger beyond appeal window
+    env.ledger().with_mut(|l| l.sequence_number += 17281);
+    client.claim_disputed_funds(&escrow_id);
 
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -1425,6 +1433,10 @@ fn test_native_xlm_dispute_resolution_refund() {
     // Arbiter resolves dispute in favor of buyer (resolution = 1)
     client.resolve_dispute(&escrow_id, &1u32);
 
+    // Advance ledger beyond appeal window
+    env.ledger().with_mut(|l| l.sequence_number += 17281);
+    client.claim_disputed_funds(&escrow_id);
+
     // Verify XLM was refunded to buyer
     assert_eq!(xlm_token.balance(&buyer), escrow_amount);
     assert_eq!(xlm_token.balance(&client.address), 0);
@@ -1483,6 +1495,10 @@ fn test_native_xlm_dispute_resolution_release() {
 
     // Arbiter resolves dispute in favor of seller (resolution = 0)
     client.resolve_dispute(&escrow_id, &0u32);
+
+    // Advance ledger beyond appeal window
+    env.ledger().with_mut(|l| l.sequence_number += 17281);
+    client.claim_disputed_funds(&escrow_id);
 
     // Verify XLM was released to seller
     assert_eq!(xlm_token.balance(&seller), escrow_amount);
@@ -1868,6 +1884,10 @@ fn test_contract_balance_invariant() {
 
     // Resolve dispute with refund to buyer (1)
     client.resolve_dispute(&escrow_id2, &1);
+
+    // Advance ledger beyond appeal window
+    env.ledger().with_mut(|l| l.sequence_number += 17281);
+    client.claim_disputed_funds(&escrow_id2);
 
     expected_contract_balance = client.get_total_funded_amount()
         - client.get_total_released_amount()
@@ -2329,9 +2349,9 @@ fn test_non_whitelisted_buyer_pays_fee() {
 
     env.mock_all_auths();
     // min fee 1000, but escrow only has 500
-    client.initialize(&admin, &collector, &500, &1000, &2000);
+    client.initialize(&admin, &collector, &250, &0, &0);
 
-    token_admin.mint(&client.address, &500);
+    token_admin.mint(&client.address, &1000);
     // Initialize with 2.5% fee (250 bps)
     // client.initialize(&admin, &collector, &250, &0, &0);
 
@@ -2341,6 +2361,7 @@ fn test_non_whitelisted_buyer_pays_fee() {
         &buyer,
         &seller,
         &token_id.address(),
+        &1000,
         &500,
         &None,
         &None,
@@ -2378,6 +2399,8 @@ fn test_non_whitelisted_buyer_pays_fee() {
     let amount: i128 = 10_000;
     xlm_admin.mint(&buyer, &amount);
 
+    let metadata2 = Some(Bytes::from_slice(&env, b"xlm-test"));
+    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &metadata2, &None, &None, &None);
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,
@@ -2391,6 +2414,7 @@ fn test_non_whitelisted_buyer_pays_fee() {
     );
     client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
+    client.withdraw_fees(&admin, &xlm_address);
 
     let expected_fee: i128 = amount * 250 / 10_000; // 250
     let expected_seller: i128 = amount - expected_fee; // 9_750
@@ -2584,6 +2608,8 @@ fn test_initialize_rejects_zero_admin() {
 
     let collector = Address::generate(&env);
     // Create a zero address by creating all-zero bytes
+    let zero_admin = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    
     let zero_admin = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
 
     env.mock_all_auths();
@@ -2623,7 +2649,7 @@ fn test_create_escrow_rejects_zero_buyer() {
     client.initialize(&admin, &admin, &250, &0, &0);
 
     // Create escrow with zero buyer should fail
-    let result = client.try_create_escrow(&zero_buyer, &seller, &token, &1000, &None, &None, &None);
+    let result = client.try_create_escrow(&zero_buyer, &seller, &token, &1000, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2640,7 +2666,7 @@ fn test_create_escrow_rejects_zero_seller() {
     client.initialize(&admin, &admin, &250, &0, &0);
 
     // Create escrow with zero seller should fail
-    let result = client.try_create_escrow(&buyer, &zero_seller, &token, &1000, &None, &None, &None);
+    let result = client.try_create_escrow(&buyer, &zero_seller, &token, &1000, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2657,7 +2683,7 @@ fn test_create_escrow_rejects_zero_token() {
     client.initialize(&admin, &admin, &250, &0, &0);
 
     // Create escrow with zero token should fail
-    let result = client.try_create_escrow(&buyer, &seller, &zero_token, &1000, &None, &None, &None);
+    let result = client.try_create_escrow(&buyer, &seller, &zero_token, &1000, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2722,6 +2748,10 @@ fn test_create_escrow_with_valid_addresses_succeeds() {
     let token = Address::generate(&env);
 
     env.mock_all_auths();
+    client.initialize(&admin, &admin, &250, &0, &0);
+    
+    // Create escrow with valid addresses should succeed
+    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
     client.initialize(&admin, &admin, &250, &0, &0).unwrap();
 
     // Create escrow with valid addresses should succeed

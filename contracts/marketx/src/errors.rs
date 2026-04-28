@@ -52,6 +52,14 @@ pub enum ContractError {
     AppealWindowClosed = 152,
     /// The appeal has already been resolved (#203).
     AppealAlreadyResolved = 153,
+    /// Group buy deadline has not been reached yet.
+    GroupBuyDeadlineNotReached = 160,
+    /// Appeal window has not yet closed.
+    AppealWindowNotClosed = 161,
+    /// Access to escrow metadata is denied (#165).
+    MetadataAccessDenied = 162,
+    /// Address is zero.
+    ZeroAddress = 163,
     /// A governance-controlled feature flag has disabled this operation.
     FeatureDisabled = 160,
     /// Invalid admin transfer request (for example, proposing the current admin).

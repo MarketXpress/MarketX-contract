@@ -89,6 +89,10 @@ pub enum DataKey {
     Appeal(u64),
     /// Cumulative on-chain reputation for an arbiter address (#204).
     ArbiterReputation(Address),
+    /// Ledger at which resolved funds become claimable.
+    ClaimableAt(u64),
+    /// Metadata visibility setting for an escrow (#165).
+    MetadataVisibility(u64),
     /// Governance feature flag: enable/disable dispute lifecycle.
     FeatureDisputesEnabled,
     /// Governance feature flag: enable/disable partial releases (`release_item`/`release_partial`).
@@ -121,33 +125,6 @@ pub struct EscrowItem {
     pub description: Option<Bytes>,
 }
 
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Escrow {
-    pub buyer: Address,
-    pub seller: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub status: EscrowStatus,
-    pub metadata: Option<Bytes>,
-    pub arbiter: Option<Address>,
-    /// Party that proposed mutual cancellation, if any.
-    pub cancellation_proposer: Option<Address>,
-    /// Individual items/milestones within this escrow
-    /// If empty, the entire escrow is treated as a single item
-    pub items: Vec<EscrowItem>,
-    /// Ledger sequence number at which this escrow was created.
-    /// Used to enforce the unfunded expiry window.
-    pub created_at: u32,
-    /// Optional shipping tracking ID for oracle verification.
-    pub tracking_id: Option<Bytes>,
-    /// Milestones for milestone-based payment releases
-    pub milestones: Vec<Milestone>,
-    /// Time-lock configuration for auto-release
-    pub time_lock: Option<TimeLock>,
-    /// Group buy configuration for multi-buyer escrows
-    pub group_buy: Option<GroupBuy>,
-}
 
 /// Number of ledgers after creation within which an escrow must be funded.
 /// After this window, anyone may call `cancel_unfunded` to remove it.
@@ -178,6 +155,18 @@ pub struct TimeLock {
     pub enabled: bool,
 }
 
+/// Individual buyer contribution in a group buy
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BuyerContribution {
+    /// Buyer address
+    pub buyer: Address,
+    /// Amount contributed
+    pub amount: i128,
+    /// Whether this buyer has funded their contribution
+    pub funded: bool,
+}
+
 /// Group buy configuration for multi-buyer escrows
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,18 +179,6 @@ pub struct GroupBuy {
     pub funded_amount: i128,
     /// Deadline ledger for funding
     pub funding_deadline: u32,
-}
-
-/// Individual buyer contribution in a group buy
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BuyerContribution {
-    /// Buyer address
-    pub buyer: Address,
-    /// Amount contributed
-    pub amount: i128,
-    /// Whether this buyer has funded their contribution
-    pub funded: bool,
 }
 
 #[contractevent(topics = ["escrow_expired"], data_format = "vec")]
@@ -217,9 +194,11 @@ pub struct EscrowExpiredEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EscrowStatus {
     Pending,
+    Funded,
     Released,
     Refunded,
     Disputed,
+    Cancelled,
 }
 
 #[contractevent(topics = ["escrow_created"], data_format = "vec")]
@@ -619,4 +598,38 @@ pub struct AppealResolvedEvent {
     pub admin: Address,
     pub outcome: u32,
     pub overturned: bool,
+}
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MetadataVisibility {
+    Private,
+    Public,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Escrow {
+    pub buyer: Address,
+    pub seller: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub status: EscrowStatus,
+    pub metadata: Option<Bytes>,
+    pub arbiter: Option<Address>,
+    /// Party that proposed mutual cancellation, if any.
+    pub cancellation_proposer: Option<Address>,
+    /// Individual items/milestones within this escrow
+    /// If empty, the entire escrow is treated as a single item
+    pub items: Vec<EscrowItem>,
+    /// Ledger sequence number at which this escrow was created.
+    /// Used to enforce the unfunded expiry window.
+    pub created_at: u32,
+    /// Optional shipping tracking ID for oracle verification.
+    pub tracking_id: Option<Bytes>,
+    /// Milestones for milestone-based payment releases
+    pub milestones: Vec<Milestone>,
+    /// Time-lock configuration for auto-release (Vec of 0 or 1 element)
+    pub time_lock: Vec<TimeLock>,
+    /// Group buy configuration for multi-buyer escrows (Vec of 0 or 1 element)
+    pub group_buy: Vec<GroupBuy>,
 }

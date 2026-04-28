@@ -95,6 +95,35 @@ fn admin_rotation_flow() {
 }
 
 #[test]
+fn transfer_admin_rejects_current_admin_address() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let result = client.try_transfer_admin(&admin);
+    assert_eq!(result, Err(Ok(ContractError::InvalidAdminTransfer)));
+}
+
+#[test]
+fn admin_can_cancel_transfer_proposal() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_proposed_admin(), Some(new_admin.clone()));
+
+    client.cancel_admin_transfer();
+    assert_eq!(client.get_proposed_admin(), None);
+}
+
+#[test]
 fn accept_admin_fails_if_none_proposed() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
@@ -202,6 +231,43 @@ fn escrow_actions_blocked_when_paused() {
 
     let result = client.try_fund_escrow(&1u64);
     assert_eq!(result, Err(Ok(ContractError::ContractPaused)));
+}
+
+#[test]
+fn admin_can_toggle_governance_feature_flags() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    assert!(client.is_disputes_enabled());
+    assert!(client.is_partial_releases_enabled());
+
+    client.set_disputes_enabled(&false);
+    client.set_partial_releases_enabled(&false);
+
+    assert!(!client.is_disputes_enabled());
+    assert!(!client.is_partial_releases_enabled());
+}
+
+#[test]
+fn disabled_feature_flags_block_paths() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+    client.set_disputes_enabled(&false);
+    client.set_partial_releases_enabled(&false);
+
+    let partial_release = client.try_release_partial(&1u64, &1i128);
+    assert_eq!(partial_release, Err(Ok(ContractError::FeatureDisabled)));
+
+    let resolve_dispute = client.try_resolve_dispute(&999u64, &0u32);
+    assert_eq!(resolve_dispute, Err(Ok(ContractError::FeatureDisabled)));
 }
 
 #[test]
@@ -2274,7 +2340,7 @@ fn test_non_whitelisted_buyer_pays_fee() {
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,
-        &token_id.address(, &None),
+        &token_id.address(),
         &500,
         &None,
         &None,
@@ -2312,7 +2378,17 @@ fn test_non_whitelisted_buyer_pays_fee() {
     let amount: i128 = 10_000;
     xlm_admin.mint(&buyer, &amount);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &xlm_address, &amount, &None, &None, &None, &None, &None);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &xlm_address,
+        &amount,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
@@ -2505,13 +2581,13 @@ fn test_initialize_rejects_zero_admin() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
-    
+
     let collector = Address::generate(&env);
     // Create a zero address by creating all-zero bytes
     let zero_admin = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
-    
+
     // Initialize with zero admin should fail
     let result = client.try_initialize(&zero_admin, &collector, &250, &0, &0);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2522,13 +2598,13 @@ fn test_initialize_rejects_zero_fee_collector() {
     let env = Env::default();
     let contract_id = env.register(Contract, ());
     let client = ContractClient::new(&env, &contract_id);
-    
+
     let admin = Address::generate(&env);
     // Create a zero address
     let zero_collector = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
-    
+
     // Initialize with zero fee_collector should fail
     let result = client.try_initialize(&admin, &zero_collector, &250, &0, &0);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2540,12 +2616,12 @@ fn test_create_escrow_rejects_zero_buyer() {
     let admin = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     let zero_buyer = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
-    
+
     // Create escrow with zero buyer should fail
     let result = client.try_create_escrow(&zero_buyer, &seller, &token, &1000, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2557,12 +2633,12 @@ fn test_create_escrow_rejects_zero_seller() {
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     let zero_seller = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
-    
+
     // Create escrow with zero seller should fail
     let result = client.try_create_escrow(&buyer, &zero_seller, &token, &1000, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2574,12 +2650,12 @@ fn test_create_escrow_rejects_zero_token() {
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
-    
+
     let zero_token = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
-    
+
     // Create escrow with zero token should fail
     let result = client.try_create_escrow(&buyer, &seller, &zero_token, &1000, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2592,14 +2668,22 @@ fn test_create_escrow_rejects_zero_arbiter() {
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     let zero_arbiter = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
-    
+
     // Create escrow with zero arbiter should fail
-    let result = client.try_create_escrow(&buyer, &seller, &token, &1000, &None, &Some(zero_arbiter), &None);
+    let result = client.try_create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &Some(zero_arbiter),
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2609,12 +2693,12 @@ fn test_create_bulk_escrows_rejects_zero_buyer() {
     let admin = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     let zero_buyer = Address::from_contract_id(&env, &BytesN::from_array(&env, &[0u8; 32]));
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
-    
+
     let mut requests = Vec::new(&env);
     requests.push_back(BulkEscrowRequest {
         seller: seller.clone(),
@@ -2623,7 +2707,7 @@ fn test_create_bulk_escrows_rejects_zero_buyer() {
         arbiter: None,
         items: None,
     });
-    
+
     // Create bulk escrows with zero buyer should fail
     let result = client.try_create_bulk_escrows(&zero_buyer, &token, &requests);
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
@@ -2636,12 +2720,14 @@ fn test_create_escrow_with_valid_addresses_succeeds() {
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
-    
+
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0).unwrap();
-    
+
     // Create escrow with valid addresses should succeed
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None).unwrap();
+    let escrow_id = client
+        .create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None)
+        .unwrap();
     assert!(escrow_id > 0);
 }
 

@@ -52,4 +52,8 @@ pub enum ContractError {
     AppealWindowClosed = 152,
     /// The appeal has already been resolved (#203).
     AppealAlreadyResolved = 153,
+    /// A governance-controlled feature flag has disabled this operation.
+    FeatureDisabled = 160,
+    /// Invalid admin transfer request (for example, proposing the current admin).
+    InvalidAdminTransfer = 161,
 }

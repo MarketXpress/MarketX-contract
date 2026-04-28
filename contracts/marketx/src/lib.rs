@@ -92,7 +92,7 @@
 //! - Reentrancy protection on critical paths
 //! - Comprehensive input validation
 
-use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contractmeta, Address, Bytes, BytesN, Env, Vec};
 
 mod errors;
 mod types;
@@ -181,6 +181,24 @@ mod test;
 ///
 /// This contract provides secure escrow services on the Stellar network.
 /// All public methods are available through the contract's public interface.
+#[contractmeta(key = "name", val = "MarketX Escrow")]
+#[contractmeta(
+    key = "description",
+    val = "Soroban escrow contract with milestone releases, dispute handling, and configurable fees."
+)]
+#[contractmeta(
+    key = "homepage",
+    val = "https://github.com/MarketXpress/MarketX-contract"
+)]
+#[contractmeta(
+    key = "repository",
+    val = "https://github.com/MarketXpress/MarketX-contract"
+)]
+#[contractmeta(
+    key = "source",
+    val = "https://github.com/MarketXpress/MarketX-contract/tree/main/contracts/marketx"
+)]
+#[contractmeta(key = "version", val = "v1.0.0")]
 #[contract]
 pub struct Contract;
 

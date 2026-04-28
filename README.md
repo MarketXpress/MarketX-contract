@@ -363,3 +363,9 @@ The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `
 ## License
 
 MIT
+
+## DevEx Task Docs
+
+- Web3 Dashboard Mock Documentation: `docs/post-task211.md`
+- Stellar Explorer Metadata Integration: `docs/post-task213.md`
+- Explorer metadata template: `docs/stellar-expert-metadata.json`

@@ -1,0 +1,15 @@
+{
+  "name": "MarketX Escrow",
+  "description": "Soroban escrow contract for milestone releases, dispute handling, and configurable marketplace fees.",
+  "homepage": "https://github.com/MarketXpress/MarketX-contract",
+  "repository": "https://github.com/MarketXpress/MarketX-contract",
+  "source": "https://github.com/MarketXpress/MarketX-contract/tree/main/contracts/marketx",
+  "version": "v1.0.0",
+  "tags": [
+    "stellar",
+    "soroban",
+    "escrow",
+    "marketplace"
+  ],
+  "icon": "https://raw.githubusercontent.com/MarketXpress/MarketX-contract/main/docs/assets/marketx-icon.png"
+}

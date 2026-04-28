@@ -61,7 +61,15 @@ pub enum ContractError {
     /// Address is zero.
     ZeroAddress = 163,
     /// A governance-controlled feature flag has disabled this operation.
-    FeatureDisabled = 160,
+    FeatureDisabled = 164,
     /// Invalid admin transfer request (for example, proposing the current admin).
-    InvalidAdminTransfer = 161,
+    InvalidAdminTransfer = 165,
+    /// Mediation phase is still open; arbiter cannot act yet (#205).
+    MediationPhaseOpen = 166,
+    /// No mediation phase exists for this escrow (#205).
+    NoMediationPhase = 167,
+    /// Mediation phase has already concluded (#205).
+    MediationAlreadyConcluded = 168,
+    /// The specified token is paused by the circuit breaker (#215).
+    TokenPaused = 169,
 }

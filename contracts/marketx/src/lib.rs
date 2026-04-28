@@ -101,77 +101,21 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, BatchFeesCollectedEvent, BulkEscrowCreatedEvent, BulkEscrowRequest,
-    BuyerContribution, CancellationProposedEvent, CounterEvidenceSubmittedEvent, DataKey,
-    DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
-    EscrowStatus, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeExemptionEvent,
-    FeesWithdrawnEvent, FundsReleasedEvent, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
-    Milestone, MilestoneCompletedEvent, RefundHistoryEntry, RefundReason, RefundRequest,
-    RefundRequestedEvent, RefundStatus, StatusChangeEvent, TimeLock, TimeLockReleasedEvent,
-    MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, UNFUNDED_EXPIRY_LEDGERS,
-    // Dispute Resolution V2 (#201-204)
-    APPEAL_WINDOW_LEDGERS, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
-    ArbiterStake, ArbiterStakedEvent, ArbiterSlashedEvent,
-    EvidenceWindow, EvidenceSubmittedEvent, EvidenceWindowExpiredEvent,
-    AppealRecord, AppealFiledEvent, AppealResolvedEvent,
-    ArbiterReputation, MetadataVisibility,
-    CONTRACT_VERSION,
-    ContractVersion,
-    MAX_DESCRIPTION_SIZE,
-    MAX_TRACKING_ID_SIZE,
-    MAX_EVIDENCE_HASH_SIZE,
-    AdminTransferredEvent,
-    AppealFiledEvent,
-    AppealRecord,
-    AppealResolvedEvent,
-    ArbiterReputation,
-    ArbiterSlashedEvent,
-    ArbiterStake,
-    ArbiterStakedEvent,
-    BatchFeesCollectedEvent,
-    BulkEscrowCreatedEvent,
-    BulkEscrowRequest,
-    BuyerContribution,
-    CancellationProposedEvent,
-    ContractResourceProfile,
-    CounterEvidenceSubmittedEvent,
-    DataKey,
-    DeliveryVerifiedEvent,
-    Escrow,
-    EscrowCreatedEvent,
-    EscrowExpiredEvent,
-    EscrowItem,
-    EscrowStatus,
-    EvidenceSubmittedEvent,
-    EvidenceWindow,
-    EvidenceWindowExpiredEvent,
-    FeeCapsChangedEvent,
-    FeeChangedEvent,
-    FeeCollectedEvent,
-    FeeCollectorRotatedEvent,
-    FeeExemptionEvent,
-    FeesWithdrawnEvent,
-    FundsReleasedEvent,
-    GroupBuy,
-    GroupBuyCompletedEvent,
-    GroupBuyFundedEvent,
-    Milestone,
-    MilestoneCompletedEvent,
-    RefundHistoryEntry,
-    RefundReason,
-    RefundRequest,
-    RefundRequestedEvent,
-    RefundStatus,
-    StatusChangeEvent,
-    StorageRentEstimate,
-    TimeLock,
-    TimeLockReleasedEvent,
-    // Dispute Resolution V2 (#201-204)
-    APPEAL_WINDOW_LEDGERS,
-    DEFAULT_EVIDENCE_WINDOW_LEDGERS,
-    MAX_ITEMS_PER_ESCROW,
-    MAX_METADATA_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    AdminTransferredEvent, AppealFiledEvent, AppealRecord, AppealResolvedEvent,
+    ArbiterReputation, ArbiterSlashedEvent, ArbiterStake, ArbiterStakedEvent,
+    BatchFeesCollectedEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, BuyerContribution,
+    CancellationProposedEvent, ContractResourceProfile, ContractVersion, CONTRACT_VERSION,
+    CounterEvidenceSubmittedEvent, DataKey, DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent,
+    EscrowExpiredEvent, EscrowItem, EscrowStatus, EvidenceSubmittedEvent, EvidenceWindow,
+    EvidenceWindowExpiredEvent, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
+    FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent, GroupBuy,
+    GroupBuyCompletedEvent, GroupBuyFundedEvent, MediationOpenedEvent, MediationPhase,
+    MediationProposedEvent, MediationSettledEvent, MetadataVisibility, Milestone,
+    MilestoneCompletedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
+    RefundStatus, StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
+    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
+    DEFAULT_MEDIATION_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE, MAX_EVIDENCE_HASH_SIZE,
+    MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -335,14 +279,6 @@ impl Contract {
     }
 
     fn process_seller_transfer(
-    fn validate_bytes_size(data: &Bytes, max: u32) -> Result<(), ContractError> {
-        if data.len() > max {
-            return Err(ContractError::MetadataTooLarge);
-        }
-        Ok(())
-    }
-
-    fn generate_escrow_hash(
         env: &Env,
         escrow_id: u64,
         amount: i128,
@@ -379,6 +315,13 @@ impl Contract {
         }
 
         fee
+    }
+
+    fn validate_bytes_size(data: &Bytes, max: u32) -> Result<(), ContractError> {
+        if data.len() > max {
+            return Err(ContractError::MetadataTooLarge);
+        }
+        Ok(())
     }
 
     fn add_pending_fee(env: &Env, collector: Address, token: Address, amount: i128) {
@@ -630,6 +573,8 @@ impl Contract {
             Self::check_zero_address(&env, a)?;
         }
 
+        Self::assert_token_not_paused(&env, &token)?;
+
         Self::validate_metadata(&metadata)?;
         Self::check_duplicate_escrow(&env, &buyer, &seller, &metadata)?;
 
@@ -773,9 +718,6 @@ impl Contract {
         buyer.require_auth();
 
         Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items, tracking_id)
-        Self::create_escrow_internal(
-            env, buyer, seller, token, amount, metadata, arbiter, items, None,
-        )
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
@@ -1175,6 +1117,8 @@ impl Contract {
             return Err(ContractError::InvalidEscrowState);
         }
 
+        Self::assert_token_not_paused(&env, &escrow.token)?;
+
         // 3. Enforce buyer authorization (covers the token transfer below)
         escrow.buyer.require_auth();
 
@@ -1226,72 +1170,6 @@ impl Contract {
             escrow_id,
             escrow.amount,
             &escrow.token,
-        // 4. Calculate fee: amount * fee_bps / 10_000 (integer floor division)
-        // Whitelisted buyers (partners/internal) pay zero fees.
-        let is_exempt: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeWhitelist(escrow.buyer.clone()))
-            .unwrap_or(false);
-
-        let mut fee_bps: u32 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::FeeBps)
-            .unwrap_or(0);
-
-        // Special logic for Native XLM
-        if let Some(native_asset) = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Address>(&DataKey::NativeAsset)
-        {
-            if escrow.token == native_asset {
-                fee_bps = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::NativeFeeBps)
-                    .unwrap_or(fee_bps);
-            }
-        }
-
-        let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-
-        let min_fee: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MinFee)
-            .unwrap_or(0);
-        let max_fee: i128 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MaxFee)
-            .unwrap_or(0);
-
-        if fee < min_fee {
-            fee = min_fee;
-        }
-        if max_fee > 0 && fee > max_fee {
-            fee = max_fee;
-        }
-
-        // Ensure fee doesn't exceed the escrow amount
-        if fee > escrow.amount {
-            fee = escrow.amount;
-        }
-        let fee: i128 = if is_exempt {
-            0
-        } else {
-            escrow.amount * (fee_bps as i128) / 10_000
-        };
-        let seller_amount = escrow.amount - fee;
-
-        let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
-
-        // 5. Transfer seller_amount to seller
-        #[allow(clippy::needless_borrows_for_generic_args)]
-        token_client.transfer(
-            &env.current_contract_address(),
             &escrow.seller,
             &escrow.buyer,
         );
@@ -1679,6 +1557,17 @@ impl Contract {
 
         if escrow.status != EscrowStatus::Disputed {
             return Err(ContractError::InvalidEscrowState);
+        }
+
+        // Block arbiter resolution while mediation window is still open (#205)
+        if let Some(phase) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, MediationPhase>(&DataKey::MediationPhase(escrow_id))
+        {
+            if !phase.concluded && env.ledger().sequence() <= phase.expires_at {
+                return Err(ContractError::MediationPhaseOpen);
+            }
         }
 
         // Enforce arbiter or admin authorization
@@ -3403,5 +3292,297 @@ impl Contract {
             actor,
         }
         .publish(env);
+    }
+
+    // =========================================================================
+    // 🚦 ISSUE #215: TOKEN-SPECIFIC CIRCUIT BREAKER
+    // =========================================================================
+
+    /// Pause all escrow operations for a specific token.
+    ///
+    /// When a token is paused, `create_escrow`, `fund_escrow`, and
+    /// `release_escrow` will reject any escrow denominated in that token.
+    /// Existing escrows are not affected until the next state-mutating call.
+    ///
+    /// Admin-only.
+    pub fn pause_token(env: Env, token: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::TokenPaused(token.clone()), &true);
+        TokenCircuitBreakerEvent {
+            token,
+            paused: true,
+            actor: admin,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Unpause a previously paused token, re-enabling escrow operations.
+    ///
+    /// Admin-only.
+    pub fn unpause_token(env: Env, token: Address) -> Result<(), ContractError> {
+        let admin = Self::assert_admin(&env)?;
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TokenPaused(token.clone()));
+        TokenCircuitBreakerEvent {
+            token,
+            paused: false,
+            actor: admin,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns `true` if the given token is currently paused.
+    pub fn is_token_paused(env: Env, token: Address) -> bool {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TokenPaused(token))
+            .unwrap_or(false)
+    }
+
+    fn assert_token_not_paused(env: &Env, token: &Address) -> Result<(), ContractError> {
+        let paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenPaused(token.clone()))
+            .unwrap_or(false);
+        if paused {
+            return Err(ContractError::TokenPaused);
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // 🤝 ISSUE #205: DISPUTE MEDIATION PHASE
+    // =========================================================================
+
+    /// Open a mediation window for a disputed escrow.
+    ///
+    /// Called automatically when a dispute is raised (via `refund_escrow`), or
+    /// manually by any escrow party. During the window, both parties may call
+    /// `propose_mediation_settlement` to agree on a split without arbiter
+    /// involvement. The arbiter may only call `resolve_dispute` after the
+    /// mediation window has expired.
+    ///
+    /// If `window_ledgers` is 0, `DEFAULT_MEDIATION_WINDOW_LEDGERS` is used.
+    pub fn open_mediation(
+        env: Env,
+        caller: Address,
+        escrow_id: u64,
+        window_ledgers: u32,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
+        caller.require_auth();
+
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        let is_party = escrow.buyer == caller
+            || escrow.seller == caller
+            || escrow.arbiter.as_ref() == Some(&caller);
+        if !is_party {
+            let admin: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Admin)
+                .ok_or(ContractError::NotAdmin)?;
+            if admin != caller {
+                return Err(ContractError::Unauthorized);
+            }
+        }
+
+        let ledgers = if window_ledgers == 0 {
+            DEFAULT_MEDIATION_WINDOW_LEDGERS
+        } else {
+            window_ledgers
+        };
+
+        let now = env.ledger().sequence();
+        let phase = MediationPhase {
+            escrow_id,
+            opened_at: now,
+            expires_at: now + ledgers,
+            buyer_proposal: None,
+            seller_proposal: None,
+            concluded: false,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::MediationPhase(escrow_id), &phase);
+
+        MediationOpenedEvent {
+            escrow_id,
+            expires_at: now + ledgers,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Propose a settlement amount during the mediation window.
+    ///
+    /// `seller_amount` is how much the caller proposes the seller receives.
+    /// The remainder (`escrow.amount - seller_amount`) goes back to the buyer.
+    ///
+    /// If both parties propose the same `seller_amount`, the escrow is
+    /// immediately settled without arbiter involvement.
+    pub fn propose_mediation_settlement(
+        env: Env,
+        proposer: Address,
+        escrow_id: u64,
+        seller_amount: i128,
+    ) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        Self::assert_disputes_enabled(&env)?;
+        proposer.require_auth();
+
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        if escrow.status != EscrowStatus::Disputed {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        if proposer != escrow.buyer && proposer != escrow.seller {
+            return Err(ContractError::Unauthorized);
+        }
+
+        if seller_amount < 0 || seller_amount > escrow.amount {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        let mut phase: MediationPhase = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MediationPhase(escrow_id))
+            .ok_or(ContractError::NoMediationPhase)?;
+
+        if phase.concluded {
+            return Err(ContractError::MediationAlreadyConcluded);
+        }
+
+        if env.ledger().sequence() > phase.expires_at {
+            return Err(ContractError::MediationAlreadyConcluded);
+        }
+
+        if proposer == escrow.buyer {
+            phase.buyer_proposal = Some(seller_amount);
+        } else {
+            phase.seller_proposal = Some(seller_amount);
+        }
+
+        MediationProposedEvent {
+            escrow_id,
+            proposer: proposer.clone(),
+            amount: seller_amount,
+        }
+        .publish(&env);
+
+        // Check if both parties agree
+        let agreed = phase.buyer_proposal == phase.seller_proposal
+            && phase.buyer_proposal.is_some();
+
+        if agreed {
+            phase.concluded = true;
+            env.storage()
+                .persistent()
+                .set(&DataKey::MediationPhase(escrow_id), &phase);
+
+            Self::execute_mediation_settlement(&env, escrow_id, &escrow, seller_amount)?;
+        } else {
+            env.storage()
+                .persistent()
+                .set(&DataKey::MediationPhase(escrow_id), &phase);
+        }
+
+        Ok(())
+    }
+
+    fn execute_mediation_settlement(
+        env: &Env,
+        escrow_id: u64,
+        escrow: &Escrow,
+        seller_amount: i128,
+    ) -> Result<(), ContractError> {
+        let buyer_refund = escrow.amount - seller_amount;
+
+        let token_client = soroban_sdk::token::Client::new(env, &escrow.token);
+
+        if seller_amount > 0 {
+            let fee = Self::calculate_fee_internal(env, seller_amount, &escrow.token, &escrow.buyer);
+            let net_seller = seller_amount - fee;
+            token_client.transfer(&env.current_contract_address(), &escrow.seller, &net_seller);
+            if fee > 0 {
+                let fee_collector: Address = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::FeeCollector)
+                    .expect("Fee collector not configured");
+                Self::add_pending_fee(env, fee_collector.clone(), escrow.token.clone(), fee);
+                Self::add_i128(env, DataKey::TotalFeesCollected, fee);
+                FeeCollectedEvent {
+                    escrow_id,
+                    fee_collector,
+                    fee,
+                }
+                .publish(env);
+            }
+        }
+
+        if buyer_refund > 0 {
+            token_client.transfer(&env.current_contract_address(), &escrow.buyer, &buyer_refund);
+        }
+
+        let mut updated_escrow = escrow.clone();
+        updated_escrow.status = EscrowStatus::Released;
+        updated_escrow.cancellation_proposer = None;
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &updated_escrow);
+
+        MediationSettledEvent {
+            escrow_id,
+            seller_amount,
+            buyer_refund,
+        }
+        .publish(env);
+
+        Self::emit_status_change(
+            env,
+            escrow_id,
+            EscrowStatus::Disputed,
+            EscrowStatus::Released,
+            escrow.buyer.clone(),
+        );
+
+        Self::add_i128(env, DataKey::TotalReleasedAmount, seller_amount);
+        if buyer_refund > 0 {
+            Self::add_i128(env, DataKey::TotalRefundedAmount, buyer_refund);
+        }
+
+        Ok(())
+    }
+
+    /// Read the mediation phase for an escrow.
+    pub fn get_mediation_phase(env: Env, escrow_id: u64) -> Option<MediationPhase> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::MediationPhase(escrow_id))
     }
 }

@@ -105,6 +105,20 @@ pub enum DataKey {
     SchemaVersion,
     /// Escrow schema version for individual escrows.
     EscrowSchemaVersion(u64),
+    
+    // ── Dispute Resolution V2.1: Multiple Arbiters ─────────────────────────────
+    /// Arbiters configuration for a specific escrow (addresses + quorum requirement).
+    ArbitersConfig(u64),
+    /// Minimum number of arbiters required for multi-arbiter escrows.
+    MinArbitersRequired,
+    /// Maximum number of arbiters allowed per escrow.
+    MaxArbitersPerEscrow,
+    /// Default quorum percentage (out of 100) for dispute voting.
+    DefaultArbiterQuorumPercentage,
+    /// Individual arbiter vote on a dispute resolution (escrow_id, arbiter_address).
+    ArbiterVote(u64, Address),
+    /// Voting record for a disputed escrow (tracks votes for release/refund).
+    DisputeVoting(u64),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -706,4 +720,106 @@ pub struct TokenCircuitBreakerEvent {
     pub token: Address,
     pub paused: bool,
     pub actor: Address,
+}
+
+// ─── Dispute Resolution V2.1: Multiple Arbiters ──────────────────────────────
+//
+// When a dispute is raised and the escrow has multiple arbiters, all arbiters
+// must reach consensus (via voting) before resolving. This eliminates the single
+// point of failure from a lone arbiter.
+
+/// Represents configuration for multiple arbiters on a single escrow.
+/// Both parties or the creator can designate multiple arbiters to act as the
+/// final authority in a dispute.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbitersConfig {
+    /// The escrow ID this config is for.
+    pub escrow_id: u64,
+    /// List of arbiter addresses authorized to vote.
+    pub arbiters: Vec<Address>,
+    /// Number of arbiters required to reach consensus (voting quorum).
+    /// E.g., if there are 3 arbiters and quorum is 2, any 2 arbiters must
+    /// agree on the resolution.
+    pub quorum_required: u32,
+    /// Ledger at which this config was created.
+    pub created_at: u32,
+}
+
+/// Individual arbiter vote on how to resolve a dispute.
+/// A vote of 0 means "Release to seller", 1 means "Refund to buyer".
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterVoteRecord {
+    /// The escrow ID being voted on.
+    pub escrow_id: u64,
+    /// The arbiter who cast this vote.
+    pub arbiter: Address,
+    /// Vote: 0 = release to seller, 1 = refund to buyer.
+    pub vote: u32,
+    /// Ledger at which the vote was cast.
+    pub voted_at: u32,
+}
+
+/// Aggregated voting record for a disputed escrow.
+/// Tracks consensus votes from all arbiters.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeVotingRecord {
+    /// The escrow ID being disputed.
+    pub escrow_id: u64,
+    /// Number of votes for releasing to seller (vote = 0).
+    pub votes_for_release: u32,
+    /// Number of votes for refunding to buyer (vote = 1).
+    pub votes_for_refund: u32,
+    /// Total number of arbiters (from config).
+    pub total_arbiters: u32,
+    /// Quorum required to resolve (from config).
+    pub quorum_required: u32,
+    /// Ledger at which voting started.
+    pub voting_opened_at: u32,
+    /// If consensus has been reached, this is the final resolution (Some(0 or 1)).
+    /// None if voting is still ongoing.
+    pub consensus_resolution: Option<u32>,
+    /// Ledger at which consensus was reached (if reached).
+    pub consensus_at: Option<u32>,
+}
+
+/// Default minimum number of arbiters for multi-arbiter escrows.
+pub const DEFAULT_MIN_ARBITERS_REQUIRED: u32 = 2;
+
+/// Default maximum number of arbiters allowed per escrow to prevent excessive voting.
+pub const DEFAULT_MAX_ARBITERS_PER_ESCROW: u32 = 7;
+
+/// Default quorum percentage for arbiters (e.g., 51 means majority).
+/// This is multiplied by 100 (so 5100 = 51%).
+pub const DEFAULT_ARBITER_QUORUM_PERCENTAGE: u32 = 5100; // 51%
+
+#[contractevent(topics = ["arbiters_configured"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbitersConfiguredEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub arbiters_count: u32,
+    pub quorum_required: u32,
+    pub created_by: Address,
+}
+
+#[contractevent(topics = ["arbiter_vote_cast"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArbiterVoteCastEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub arbiter: Address,
+    pub vote: u32, // 0 = release, 1 = refund
+}
+
+#[contractevent(topics = ["dispute_consensus_reached"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DisputeConsensusReachedEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub resolution: u32, // 0 = release to seller, 1 = refund to buyer
+    pub votes_for_release: u32,
+    pub votes_for_refund: u32,
 }

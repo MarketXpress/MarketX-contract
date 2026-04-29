@@ -232,6 +232,81 @@ export const MARKETX_ERRORS: Readonly<Record<number, ContractErrorInfo>> = {
     message: 'The appeal has already been resolved.',
     recovery: '',
   },
+  160: {
+    code: 'GroupBuyDeadlineNotReached',
+    message: 'The group buy deadline has not been reached yet.',
+    recovery: '',
+  },
+  161: {
+    code: 'AppealWindowNotClosed',
+    message: 'The appeal window has not yet closed.',
+    recovery: '',
+  },
+  162: {
+    code: 'MetadataAccessDenied',
+    message: 'Access to escrow metadata is denied.',
+    recovery: 'The metadata visibility is set to Private.',
+  },
+  163: {
+    code: 'ZeroAddress',
+    message: 'Address is zero.',
+    recovery: 'Provide a valid non-zero address.',
+  },
+  164: {
+    code: 'FeatureDisabled',
+    message: 'A governance-controlled feature flag has disabled this operation.',
+    recovery: '',
+  },
+  165: {
+    code: 'InvalidAdminTransfer',
+    message: 'Invalid admin transfer request.',
+    recovery: 'Cannot propose the current admin as the new admin.',
+  },
+  166: {
+    code: 'MediationPhaseOpen',
+    message: 'Mediation phase is still open; arbiter cannot act yet.',
+    recovery: 'Wait for the mediation phase to conclude.',
+  },
+  167: {
+    code: 'NoMediationPhase',
+    message: 'No mediation phase exists for this escrow.',
+    recovery: '',
+  },
+  168: {
+    code: 'MediationAlreadyConcluded',
+    message: 'Mediation phase has already concluded.',
+    recovery: '',
+  },
+  169: {
+    code: 'TokenPaused',
+    message: 'The specified token is paused by the circuit breaker.',
+    recovery: 'Use a different token or wait for the token to be unpaused.',
+  },
+  170: {
+    code: 'MigrationInvalidSourceVersion',
+    message: 'Migration failed: invalid source version.',
+    recovery: '',
+  },
+  171: {
+    code: 'MigrationAlreadyUpToDate',
+    message: 'Migration failed: already at latest version.',
+    recovery: '',
+  },
+  172: {
+    code: 'MigrationEscrowNotFound',
+    message: 'Migration failed: escrow not found during migration.',
+    recovery: '',
+  },
+  173: {
+    code: 'MigrationStorageError',
+    message: 'Migration failed: storage error during migration.',
+    recovery: '',
+  },
+  174: {
+    code: 'MigrationInvalidTargetVersion',
+    message: 'Migration failed: invalid migration target version.',
+    recovery: '',
+  },
 } as const;
 
 /**

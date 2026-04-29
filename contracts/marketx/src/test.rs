@@ -2568,7 +2568,10 @@ fn test_initialize_rejects_zero_admin() {
     let client = ContractClient::new(&env, &contract_id);
 
     let collector = Address::generate(&env);
-    let zero_admin = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_admin = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
 
@@ -2583,7 +2586,10 @@ fn test_initialize_rejects_zero_fee_collector() {
     let client = ContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
-    let zero_collector = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_collector = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
 
@@ -2598,12 +2604,24 @@ fn test_create_escrow_rejects_zero_buyer() {
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
-    let zero_buyer = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_buyer = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
 
-    let result = client.try_create_escrow(&zero_buyer, &seller, &token, &1000, &None, &None, &None, &None);
+    let result = client.try_create_escrow(
+        &zero_buyer,
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2614,12 +2632,24 @@ fn test_create_escrow_rejects_zero_seller() {
     let buyer = Address::generate(&env);
     let token = Address::generate(&env);
 
-    let zero_seller = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_seller = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
 
-    let result = client.try_create_escrow(&buyer, &zero_seller, &token, &1000, &None, &None, &None, &None);
+    let result = client.try_create_escrow(
+        &buyer,
+        &zero_seller,
+        &token,
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2630,12 +2660,24 @@ fn test_create_escrow_rejects_zero_token() {
     let buyer = Address::generate(&env);
     let seller = Address::generate(&env);
 
-    let zero_token = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_token = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
 
-    let result = client.try_create_escrow(&buyer, &seller, &zero_token, &1000, &None, &None, &None, &None);
+    let result = client.try_create_escrow(
+        &buyer,
+        &seller,
+        &zero_token,
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
     assert_eq!(result, Err(Ok(ContractError::ZeroAddress)));
 }
 
@@ -2647,7 +2689,10 @@ fn test_create_escrow_rejects_zero_arbiter() {
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
-    let zero_arbiter = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_arbiter = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
@@ -2672,7 +2717,10 @@ fn test_create_bulk_escrows_rejects_zero_buyer() {
     let seller = Address::generate(&env);
     let token = Address::generate(&env);
 
-    let zero_buyer = Address::from_string(&soroban_sdk::String::from_str(&env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+    let zero_buyer = Address::from_string(&soroban_sdk::String::from_str(
+        &env,
+        "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+    ));
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
@@ -2701,7 +2749,8 @@ fn test_create_escrow_with_valid_addresses_succeeds() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &250, &0, &0);
 
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
     assert!(escrow_id > 0);
 }
 
@@ -2848,7 +2897,8 @@ fn test_token_circuit_breaker_blocks_create_escrow() {
     assert!(client.is_token_paused(&token));
 
     // Creating an escrow with the paused token should fail
-    let result = client.try_create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
+    let result =
+        client.try_create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::TokenPaused)));
 }
 
@@ -2868,7 +2918,14 @@ fn test_token_circuit_breaker_blocks_fund_escrow() {
 
     // Create escrow before pausing
     let escrow_id = client.create_escrow(
-        &buyer, &seller, &token_id.address(), &1000, &None, &None, &None, &None,
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
     );
 
     // Now pause the token
@@ -2897,7 +2954,8 @@ fn test_token_circuit_breaker_unpause_restores_operations() {
     assert!(!client.is_token_paused(&token));
 
     // After unpausing, create_escrow should succeed
-    let escrow_id = client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
     assert!(escrow_id > 0);
 }
 
@@ -2917,11 +2975,13 @@ fn test_token_circuit_breaker_other_tokens_unaffected() {
     client.pause_token(&token_a);
 
     // token_b should still work
-    let escrow_id = client.create_escrow(&buyer, &seller, &token_b, &1000, &None, &None, &None, &None);
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token_b, &1000, &None, &None, &None, &None);
     assert!(escrow_id > 0);
 
     // token_a should fail
-    let result = client.try_create_escrow(&buyer, &seller, &token_a, &1000, &None, &None, &None, &None);
+    let result =
+        client.try_create_escrow(&buyer, &seller, &token_a, &1000, &None, &None, &None, &None);
     assert_eq!(result, Err(Ok(ContractError::TokenPaused)));
 }
 
@@ -3022,7 +3082,8 @@ fn test_arbiter_can_resolve_after_mediation_expires() {
     client.open_mediation(&buyer, &escrow_id, &10);
 
     // Advance ledger past the mediation window
-    env.ledger().set_sequence_number(env.ledger().sequence() + 11);
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + 11);
 
     // Arbiter can now resolve
     client.resolve_dispute(&escrow_id, &1); // refund buyer

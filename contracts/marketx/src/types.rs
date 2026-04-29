@@ -67,6 +67,9 @@ pub enum DataKey {
 
     TotalRefundedAmount,
     TotalDisputedCount,
+    TotalReleasedCount,
+    TotalRefundedCount,
+    TotalCancelledCount,
     TotalFeesCollected,
     EscrowIds,
 
@@ -150,7 +153,6 @@ pub struct EscrowItem {
     /// Optional description/metadata for this item (e.g., product ID)
     pub description: Option<Bytes>,
 }
-
 
 /// Number of ledgers after creation within which an escrow must be funded.
 /// After this window, anyone may call `cancel_unfunded` to remove it.
@@ -569,6 +571,19 @@ pub struct ArbiterReputation {
     pub slash_count: u32,
     /// Ledger of the most recent activity.
     pub last_active: u32,
+}
+
+// ─── Global Dispute Analytics and Transparency Log ─────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GlobalDisputeAnalytics {
+    pub total_escrows: u64,
+    pub released_count: u32,
+    pub refunded_count: u32,
+    pub disputed_count: u32,
+    pub cancelled_count: u32,
+    pub failure_rate_bps: u32,
 }
 
 // ─── Dispute Resolution V2 events ────────────────────────────────────────────

@@ -906,11 +906,11 @@ impl Contract {
     }
 
     pub fn analytics_summary(env: Env) -> GlobalDisputeAnalytics {
-        let total_escrows = Self::get_total_escrows(env);
-        let released_count = Self::get_total_released_count(env);
-        let refunded_count = Self::get_total_refunded_count(env);
-        let disputed_count = Self::get_total_disputed_count(env);
-        let cancelled_count = Self::get_total_cancelled_count(env);
+        let total_escrows = Self::get_total_escrows(env.clone());
+        let released_count = Self::get_total_released_count(env.clone());
+        let refunded_count = Self::get_total_refunded_count(env.clone());
+        let disputed_count = Self::get_total_disputed_count(env.clone());
+        let cancelled_count = Self::get_total_cancelled_count(env.clone());
 
         let failure_rate_bps = if total_escrows > 0 {
             let failures = refunded_count + disputed_count + cancelled_count;
@@ -1436,13 +1436,13 @@ FundsReleasedEvent {
         }
         .publish(env);
 
-        Self::emit_status_change(
-            env,
+        StatusChangeEvent {
             escrow_id,
-            EscrowStatus::Disputed,
-            EscrowStatus::Released,
-            escrow.buyer.clone(),
-        );
+            from_status: EscrowStatus::Disputed,
+            to_status: EscrowStatus::Released,
+            actor: escrow.buyer.clone(),
+        }
+        .publish(env);
 
         Self::add_i128(env, DataKey::TotalReleasedAmount, net_seller);
         if buyer_refund > 0 {

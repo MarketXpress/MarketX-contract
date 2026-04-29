@@ -39,6 +39,14 @@ make build
 stellar contract build
 ```
 
+For production-ready WASM artifacts with repository-standard optimization flags:
+
+```bash
+make build-prod
+# or directly:
+./scripts/build_wasm.sh
+```
+
 ---
 
 ## Testing

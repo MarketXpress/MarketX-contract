@@ -101,12 +101,20 @@ pub enum DataKey {
     MediationPhase(u64),
     /// Token-specific circuit breaker: paused tokens (#215).
     TokenPaused(Address),
+    /// Schema version for state migration (#216).
+    SchemaVersion,
+    /// Escrow schema version for individual escrows.
+    EscrowSchemaVersion(u64),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
 
 /// Maximum size for per-item and milestone description fields (bytes).
 pub const MAX_DESCRIPTION_SIZE: u32 = 256;
+
+/// Current schema version for state migration (#216).
+/// Increment this when making breaking changes to stored types.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
 /// Maximum size for a shipping tracking ID (bytes).
 pub const MAX_TRACKING_ID_SIZE: u32 = 128;

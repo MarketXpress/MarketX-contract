@@ -72,4 +72,14 @@ pub enum ContractError {
     MediationAlreadyConcluded = 168,
     /// The specified token is paused by the circuit breaker (#215).
     TokenPaused = 169,
+    /// Migration failed: invalid source version.
+    MigrationInvalidSourceVersion = 170,
+    /// Migration failed: already at latest version.
+    MigrationAlreadyUpToDate = 171,
+    /// Migration failed: escrow not found during migration.
+    MigrationEscrowNotFound = 172,
+    /// Migration failed: storage error during migration.
+    MigrationStorageError = 173,
+    /// Migration failed: invalid migration target version.
+    MigrationInvalidTargetVersion = 174,
 }

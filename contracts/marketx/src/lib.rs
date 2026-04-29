@@ -101,19 +101,19 @@ use soroban_sdk::xdr::ToXdr;
 
 pub use errors::ContractError;
 pub use types::{
-    AdminTransferredEvent, AppealFiledEvent, AppealRecord, AppealResolvedEvent,
-    ArbiterReputation, ArbiterSlashedEvent, ArbiterStake, ArbiterStakedEvent,
-    BatchFeesCollectedEvent, BulkEscrowCreatedEvent, BulkEscrowRequest, BuyerContribution,
-    CancellationProposedEvent, ContractResourceProfile, ContractVersion, CONTRACT_VERSION,
-    CounterEvidenceSubmittedEvent, DataKey, DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, EvidenceSubmittedEvent, EvidenceWindow,
-    EvidenceWindowExpiredEvent, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
-    FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent, GlobalDisputeAnalytics, GroupBuy,
+    AdminTransferredEvent, AppealFiledEvent, AppealRecord, AppealResolvedEvent, ArbiterReputation,
+    ArbiterSlashedEvent, ArbiterStake, ArbiterStakedEvent, BatchFeesCollectedEvent,
+    BulkEscrowCreatedEvent, BulkEscrowRequest, BuyerContribution, CancellationProposedEvent,
+    ContractResourceProfile, ContractVersion, CounterEvidenceSubmittedEvent, DataKey,
+    DeliveryVerifiedEvent, Escrow, EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem,
+    EscrowStatus, EvidenceSubmittedEvent, EvidenceWindow, EvidenceWindowExpiredEvent,
+    FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent, FeeCollectorRotatedEvent,
+    FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent, GlobalDisputeAnalytics, GroupBuy,
     GroupBuyCompletedEvent, GroupBuyFundedEvent, MediationOpenedEvent, MediationPhase,
     MediationProposedEvent, MediationSettledEvent, MetadataVisibility, Milestone,
     MilestoneCompletedEvent, RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent,
     RefundStatus, StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
-    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CURRENT_SCHEMA_VERSION,
+    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
     DEFAULT_EVIDENCE_WINDOW_LEDGERS, DEFAULT_MEDIATION_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
     MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
@@ -207,18 +207,13 @@ impl Contract {
         env.storage().persistent().set(&key, &next);
     }
 
-    fn calculate_fee_internal(
-        env: &Env,
-        amount: i128,
-        token: &Address,
-        buyer: &Address,
-    ) -> i128 {
+    fn calculate_fee_internal(env: &Env, amount: i128, token: &Address, buyer: &Address) -> i128 {
         let is_exempt: bool = env
             .storage()
             .persistent()
             .get(&DataKey::FeeWhitelist(buyer.clone()))
             .unwrap_or(false);
-        
+
         if is_exempt {
             return 0;
         }
@@ -291,11 +286,7 @@ impl Contract {
         let seller_amount = amount - fee;
 
         let token_client = soroban_sdk::token::Client::new(env, token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            seller,
-            &seller_amount,
-        );
+        token_client.transfer(&env.current_contract_address(), seller, &seller_amount);
 
         if fee > 0 {
             let fee_collector: Address = env
@@ -333,8 +324,12 @@ impl Contract {
 
     fn refund_buyer(env: &Env, escrow: &mut Escrow) {
         let token_client = soroban_sdk::token::Client::new(env, &escrow.token);
-        token_client.transfer(&env.current_contract_address(), &escrow.buyer, &escrow.amount);
-        
+        token_client.transfer(
+            &env.current_contract_address(),
+            &escrow.buyer,
+            &escrow.amount,
+        );
+
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
         Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
@@ -350,7 +345,12 @@ impl Contract {
         Ok(())
     }
 
-    fn check_duplicate_escrow(env: &Env, buyer: &Address, seller: &Address, metadata: &Option<Bytes>) -> Result<(), ContractError> {
+    fn check_duplicate_escrow(
+        env: &Env,
+        buyer: &Address,
+        seller: &Address,
+        metadata: &Option<Bytes>,
+    ) -> Result<(), ContractError> {
         let hash = Self::generate_escrow_hash(env, buyer, seller, metadata);
         if env.storage().persistent().has(&DataKey::EscrowHash(hash)) {
             return Err(ContractError::DuplicateEscrow);
@@ -358,7 +358,12 @@ impl Contract {
         Ok(())
     }
 
-    fn generate_escrow_hash(env: &Env, buyer: &Address, seller: &Address, metadata: &Option<Bytes>) -> BytesN<32> {
+    fn generate_escrow_hash(
+        env: &Env,
+        buyer: &Address,
+        seller: &Address,
+        metadata: &Option<Bytes>,
+    ) -> BytesN<32> {
         let mut vec = Vec::new(env);
         vec.push_back(buyer.to_xdr(env));
         vec.push_back(seller.to_xdr(env));
@@ -369,21 +374,37 @@ impl Contract {
     }
 
     fn next_escrow_id(env: &Env) -> Result<u64, ContractError> {
-        let current: u64 = env.storage().persistent().get(&DataKey::EscrowCounter).unwrap_or(0);
-        let next = current.checked_add(1).ok_or(ContractError::EscrowIdOverflow)?;
-        env.storage().persistent().set(&DataKey::EscrowCounter, &next);
+        let current: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::EscrowCounter)
+            .unwrap_or(0);
+        let next = current
+            .checked_add(1)
+            .ok_or(ContractError::EscrowIdOverflow)?;
+        env.storage()
+            .persistent()
+            .set(&DataKey::EscrowCounter, &next);
         Ok(next)
     }
 
     fn next_refund_id(env: &Env) -> Result<u64, ContractError> {
-        let current: u64 = env.storage().persistent().get(&DataKey::RefundCount).unwrap_or(0);
-        let next = current.checked_add(1).ok_or(ContractError::EscrowIdOverflow)?;
+        let current: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundCount)
+            .unwrap_or(0);
+        let next = current
+            .checked_add(1)
+            .ok_or(ContractError::EscrowIdOverflow)?;
         env.storage().persistent().set(&DataKey::RefundCount, &next);
         Ok(next)
     }
 
     fn is_escrow_party(escrow: &Escrow, actor: &Address) -> bool {
-        actor == &escrow.buyer || actor == &escrow.seller || escrow.arbiter.as_ref().map_or(false, |a| a == actor)
+        actor == &escrow.buyer
+            || actor == &escrow.seller
+            || escrow.arbiter.as_ref().map_or(false, |a| a == actor)
     }
 
     fn has_released_items(escrow: &Escrow) -> bool {
@@ -396,7 +417,10 @@ impl Contract {
     }
 
     fn check_zero_address(env: &Env, addr: &Address) -> Result<(), ContractError> {
-        let zero = Address::from_string(&soroban_sdk::String::from_str(env, "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"));
+        let zero = Address::from_string(&soroban_sdk::String::from_str(
+            env,
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF",
+        ));
         if addr == &zero {
             return Err(ContractError::ZeroAddress);
         }
@@ -476,7 +500,7 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);
-        
+
         Ok(())
     }
 
@@ -596,7 +620,6 @@ impl Contract {
         if amount <= 0 {
             return Err(ContractError::InvalidEscrowAmount);
         }
-
 
         // Process items
         let escrow_items = match items {
@@ -728,7 +751,17 @@ impl Contract {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
 
-        Self::create_escrow_internal(env, buyer, seller, token, amount, metadata, arbiter, items, tracking_id)
+        Self::create_escrow_internal(
+            env,
+            buyer,
+            seller,
+            token,
+            amount,
+            metadata,
+            arbiter,
+            items,
+            tracking_id,
+        )
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
@@ -772,41 +805,76 @@ impl Contract {
         env.storage().persistent().get(&DataKey::Escrow(escrow_id))
     }
 
-    pub fn get_escrow_metadata(env: Env, escrow_id: u64, caller: Address) -> Result<Option<Bytes>, ContractError> {
-        let escrow: Escrow = env.storage().persistent().get(&DataKey::Escrow(escrow_id)).ok_or(ContractError::EscrowNotFound)?;
-        
+    pub fn get_escrow_metadata(
+        env: Env,
+        escrow_id: u64,
+        caller: Address,
+    ) -> Result<Option<Bytes>, ContractError> {
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
         Self::check_metadata_access(&env, escrow_id, &escrow, &caller)?;
-        
+
         Ok(escrow.metadata)
     }
 
-    pub fn set_metadata_visibility(env: Env, escrow_id: u64, visibility: MetadataVisibility) -> Result<(), ContractError> {
+    pub fn set_metadata_visibility(
+        env: Env,
+        escrow_id: u64,
+        visibility: MetadataVisibility,
+    ) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
-        
-        let escrow: Escrow = env.storage().persistent().get(&DataKey::Escrow(escrow_id)).ok_or(ContractError::EscrowNotFound)?;
+
+        let escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
         escrow.buyer.require_auth();
-        
-        env.storage().persistent().set(&DataKey::MetadataVisibility(escrow_id), &visibility);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::MetadataVisibility(escrow_id), &visibility);
         Ok(())
     }
 
-    fn check_metadata_access(env: &Env, escrow_id: u64, escrow: &Escrow, caller: &Address) -> Result<(), ContractError> {
-        let visibility: MetadataVisibility = env.storage().persistent().get(&DataKey::MetadataVisibility(escrow_id)).unwrap_or(MetadataVisibility::Private);
-        
+    fn check_metadata_access(
+        env: &Env,
+        escrow_id: u64,
+        escrow: &Escrow,
+        caller: &Address,
+    ) -> Result<(), ContractError> {
+        let visibility: MetadataVisibility = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MetadataVisibility(escrow_id))
+            .unwrap_or(MetadataVisibility::Private);
+
         if visibility == MetadataVisibility::Public {
             return Ok(());
         }
-        
-        if caller == &escrow.buyer || caller == &escrow.seller || caller == &env.storage().persistent().get::<DataKey, Address>(&DataKey::Admin).unwrap() {
+
+        if caller == &escrow.buyer
+            || caller == &escrow.seller
+            || caller
+                == &env
+                    .storage()
+                    .persistent()
+                    .get::<DataKey, Address>(&DataKey::Admin)
+                    .unwrap()
+        {
             return Ok(());
         }
-        
+
         if let Some(arbiter) = &escrow.arbiter {
             if caller == arbiter {
                 return Ok(());
             }
         }
-        
+
         Err(ContractError::MetadataAccessDenied)
     }
 
@@ -1140,7 +1208,7 @@ impl Contract {
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
 
-FundsReleasedEvent {
+        FundsReleasedEvent {
             escrow_id,
             amount: escrow.amount,
             fee,
@@ -1148,7 +1216,7 @@ FundsReleasedEvent {
         .publish(&env);
         Self::add_i128(&env, DataKey::TotalReleasedAmount, seller_amount);
         Self::add_u32(&env, DataKey::TotalReleasedCount);
-        
+
         StatusChangeEvent {
             escrow_id,
             from_status: from,
@@ -1359,8 +1427,8 @@ FundsReleasedEvent {
         .publish(&env);
 
         // Check if both parties agree
-        let agreed = phase.buyer_proposal == phase.seller_proposal
-            && phase.buyer_proposal.is_some();
+        let agreed =
+            phase.buyer_proposal == phase.seller_proposal && phase.buyer_proposal.is_some();
 
         if agreed {
             phase.concluded = true;
@@ -1390,7 +1458,8 @@ FundsReleasedEvent {
         let token_client = soroban_sdk::token::Client::new(env, &escrow.token);
 
         if seller_amount > 0 {
-            let fee = Self::calculate_fee_internal(env, seller_amount, &escrow.token, &escrow.buyer);
+            let fee =
+                Self::calculate_fee_internal(env, seller_amount, &escrow.token, &escrow.buyer);
             net_seller = seller_amount - fee;
             token_client.transfer(&env.current_contract_address(), &escrow.seller, &net_seller);
             if fee > 0 {
@@ -1411,7 +1480,11 @@ FundsReleasedEvent {
         }
 
         if buyer_refund > 0 {
-            token_client.transfer(&env.current_contract_address(), &escrow.buyer, &buyer_refund);
+            token_client.transfer(
+                &env.current_contract_address(),
+                &escrow.buyer,
+                &buyer_refund,
+            );
         }
 
         let mut updated_escrow = escrow.clone();

@@ -140,7 +140,6 @@ pub struct EscrowItem {
     pub description: Option<Bytes>,
 }
 
-
 /// Number of ledgers after creation within which an escrow must be funded.
 /// After this window, anyone may call `cancel_unfunded` to remove it.
 /// ~7 days at ~5s per ledger: 7 * 24 * 3600 / 5 = 120_960 ledgers.

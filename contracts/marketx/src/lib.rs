@@ -338,6 +338,7 @@ impl Contract {
         escrow.status = EscrowStatus::Refunded;
         escrow.cancellation_proposer = None;
         Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
+        Self::add_u32(env, DataKey::TotalRefundedCount);
     }
 
     fn validate_metadata(metadata: &Option<Bytes>) -> Result<(), ContractError> {
@@ -463,6 +464,15 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalDisputedCount, &0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalReleasedCount, &0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalRefundedCount, &0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalCancelledCount, &0u32);
         env.storage()
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);

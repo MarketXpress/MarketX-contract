@@ -103,6 +103,14 @@ make build
 stellar contract build
 ```
 
+For production-ready WASM artifacts using the repository's optimized release profile:
+
+```bash
+make build-prod
+# or directly:
+./scripts/build_wasm.sh
+```
+
 Artifacts land at:
 
 ```

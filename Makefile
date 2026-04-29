@@ -4,6 +4,10 @@
 build:
 	stellar contract build
 
+# Build all contracts with production WASM optimization
+build-prod:
+	./scripts/build_wasm.sh
+
 # Run all unit tests across the workspace
 test:
 	cargo test

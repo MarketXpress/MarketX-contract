@@ -165,6 +165,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "group_buy"
+                    },
+                    "val": {
+                      "vec": []
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "items"
                     },
                     "val": {
@@ -177,6 +185,14 @@
                     },
                     "val": {
                       "bytes": "6f726465725f7265663a756e697175655f686173685f74657374"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "milestones"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -197,6 +213,14 @@
                           "symbol": "Pending"
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "time_lock"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -258,7 +282,7 @@
                     "symbol": "EscrowHash"
                   },
                   {
-                    "bytes": "99e79bd2ac1fdb1255e34e0324c33c029c748098a0c345a56a381b9909c93030"
+                    "bytes": "9083b130dd1317656ddae9b555c060dc6615bd0811c9f5532b5d4ff0ea1dead0"
                   }
                 ]
               },
@@ -426,6 +450,30 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "TotalCancelledCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "TotalDisputedCount"
                   }
                 ]
@@ -505,6 +553,54 @@
               "durability": "persistent",
               "val": {
                 "i128": "0"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "TotalRefundedCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "TotalReleasedCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
               }
             }
           },

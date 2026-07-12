@@ -4,7 +4,7 @@ extern crate std;
 use soroban_sdk::testutils::Events;
 use soroban_sdk::{
     testutils::{storage::Persistent as _, Address as _, Ledger as _, MockAuth, MockAuthInvoke},
-    Address, Bytes, BytesN, Env, Event, IntoVal, Vec,
+    Address, Bytes, Env, Event, IntoVal, Vec,
 };
 
 use crate::errors::ContractError;

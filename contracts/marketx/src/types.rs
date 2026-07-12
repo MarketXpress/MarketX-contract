@@ -108,7 +108,7 @@ pub enum DataKey {
     SchemaVersion,
     /// Escrow schema version for individual escrows.
     EscrowSchemaVersion(u64),
-    
+
     // ── Dispute Resolution V2.1: Multiple Arbiters ─────────────────────────────
     /// Arbiters configuration for a specific escrow (addresses + quorum requirement).
     ArbitersConfig(u64),

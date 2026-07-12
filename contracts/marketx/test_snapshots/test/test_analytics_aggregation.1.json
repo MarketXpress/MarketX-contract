@@ -234,6 +234,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "group_buy"
+                    },
+                    "val": {
+                      "vec": []
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "items"
                     },
                     "val": {
@@ -245,6 +253,14 @@
                       "symbol": "metadata"
                     },
                     "val": "void"
+                  },
+                  {
+                    "key": {
+                      "symbol": "milestones"
+                    },
+                    "val": {
+                      "vec": []
+                    }
                   },
                   {
                     "key": {
@@ -264,6 +280,14 @@
                           "symbol": "Pending"
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "time_lock"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -346,6 +370,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "group_buy"
+                    },
+                    "val": {
+                      "vec": []
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "items"
                     },
                     "val": {
@@ -358,6 +390,14 @@
                     },
                     "val": {
                       "bytes": "6d65746131"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "milestones"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -378,6 +418,14 @@
                           "symbol": "Pending"
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "time_lock"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -460,6 +508,14 @@
                   },
                   {
                     "key": {
+                      "symbol": "group_buy"
+                    },
+                    "val": {
+                      "vec": []
+                    }
+                  },
+                  {
+                    "key": {
                       "symbol": "items"
                     },
                     "val": {
@@ -472,6 +528,14 @@
                     },
                     "val": {
                       "bytes": "6d65746132"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "milestones"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -492,6 +556,14 @@
                           "symbol": "Pending"
                         }
                       ]
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "time_lock"
+                    },
+                    "val": {
+                      "vec": []
                     }
                   },
                   {
@@ -553,7 +625,34 @@
                     "symbol": "EscrowHash"
                   },
                   {
-                    "bytes": "97b3b75cb25d66a2f9be4cf21aa9218f64f13563bed72e6b9d06d8e4e12371cb"
+                    "bytes": "063a06117c683627a2456aa11249a62161cad4623446a0cd36e9e9245b3a578c"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u64": "2"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "EscrowHash"
+                  },
+                  {
+                    "bytes": "63b90589003c8df9b6c5188da513768df0e2a700c35507246b313443db578736"
                   }
                 ]
               },
@@ -580,40 +679,13 @@
                     "symbol": "EscrowHash"
                   },
                   {
-                    "bytes": "9e00f8db46142effd33114df68293b5d733f925436f0b0a0f7db6fdd3513f902"
+                    "bytes": "8e834685803eb32a4a8954625d7c443df0ce65c4eb761e45990a2884e4948ead"
                   }
                 ]
               },
               "durability": "persistent",
               "val": {
                 "u64": "3"
-              }
-            }
-          },
-          "ext": "v0"
-        },
-        "live_until": 4095
-      },
-      {
-        "entry": {
-          "last_modified_ledger_seq": 0,
-          "data": {
-            "contract_data": {
-              "ext": "v0",
-              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "key": {
-                "vec": [
-                  {
-                    "symbol": "EscrowHash"
-                  },
-                  {
-                    "bytes": "ab51002ee7dedb817a7a5afec06e3c6c5e41af7a3d3c57009e723a94c38c0b03"
-                  }
-                ]
-              },
-              "durability": "persistent",
-              "val": {
-                "u64": "2"
               }
             }
           },
@@ -775,6 +847,30 @@
               "key": {
                 "vec": [
                   {
+                    "symbol": "TotalCancelledCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
                     "symbol": "TotalDisputedCount"
                   }
                 ]
@@ -854,6 +950,54 @@
               "durability": "persistent",
               "val": {
                 "i128": "0"
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "TotalRefundedCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
+              }
+            }
+          },
+          "ext": "v0"
+        },
+        "live_until": 4095
+      },
+      {
+        "entry": {
+          "last_modified_ledger_seq": 0,
+          "data": {
+            "contract_data": {
+              "ext": "v0",
+              "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+              "key": {
+                "vec": [
+                  {
+                    "symbol": "TotalReleasedCount"
+                  }
+                ]
+              },
+              "durability": "persistent",
+              "val": {
+                "u32": 0
               }
             }
           },

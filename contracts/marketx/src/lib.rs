@@ -983,12 +983,10 @@ impl Contract {
         let disputed_count = Self::get_total_disputed_count(env.clone());
         let cancelled_count = Self::get_total_cancelled_count(env.clone());
 
-        let failure_rate_bps = if total_escrows > 0 {
-            let failures = refunded_count + disputed_count + cancelled_count;
-            ((failures as u64) * 10_000 / total_escrows) as u32
-        } else {
-            0
-        };
+        let failures = refunded_count + disputed_count + cancelled_count;
+        let failure_rate_bps = ((failures as u64) * 10_000)
+            .checked_div(total_escrows)
+            .unwrap_or(0) as u32;
 
         GlobalDisputeAnalytics {
             total_escrows,

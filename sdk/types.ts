@@ -26,6 +26,7 @@ export const UNFUNDED_EXPIRY_LEDGERS = 120960;
 export const DEFAULT_EVIDENCE_WINDOW_LEDGERS = 34560;
 export const APPEAL_WINDOW_LEDGERS = 17280;
 export const DEFAULT_MEDIATION_WINDOW_LEDGERS = 34560;
+export const DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS = 17280;
 
 export type EscrowStatus =
   | 'Pending'
@@ -188,6 +189,13 @@ export interface MediationPhase {
   concluded: boolean;
 }
 
+export interface PendingOracleRelease {
+  escrow_id: number;
+  oracle: string;
+  verified_at: number;
+  release_at: number;
+}
+
 export type DataKey =
   | { Escrow: number }
   | 'EscrowCounter'
@@ -232,7 +240,8 @@ export type DataKey =
   | { MediationPhase: number }
   | { TokenPaused: string }
   | 'SchemaVersion'
-  | { EscrowSchemaVersion: number };
+  | { EscrowSchemaVersion: number }
+  | { PendingOracleRelease: number };
 
 export interface EscrowCreatedEvent {
   escrow_id: number;
@@ -254,6 +263,7 @@ export interface FundsReleasedEvent {
 export interface DeliveryVerifiedEvent {
   escrow_id: number;
   tracking_id: string;
+  release_at: number;
 }
 
 export interface FeeCollectedEvent {

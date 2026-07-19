@@ -122,6 +122,8 @@ pub enum DataKey {
     ArbiterVote(u64, Address),
     /// Voting record for a disputed escrow (tracks votes for release/refund).
     DisputeVoting(u64),
+    /// Pending oracle-triggered release awaiting its challenge window (#244).
+    PendingOracleRelease(u64),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -258,6 +260,34 @@ pub struct DeliveryVerifiedEvent {
     #[topic]
     pub escrow_id: u64,
     pub tracking_id: Bytes,
+    /// Ledger after which `execute_oracle_release` may finalize the transfer.
+    pub release_at: u32,
+}
+
+// ─── Issue #244: Oracle Release Challenge Window ─────────────────────────────
+
+/// Default oracle challenge window length in ledgers (~24 hours at 5 s/ledger).
+///
+/// A single oracle attestation is not enough to move funds on its own:
+/// `verify_delivery` only records intent to release. The buyer has this many
+/// ledgers to raise a dispute via `refund_escrow` before `execute_oracle_release`
+/// is allowed to finalize the transfer.
+pub const DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS: u32 = 17_280;
+
+/// A pending oracle-triggered release awaiting its challenge window (#244).
+///
+/// Recorded by `verify_delivery` and consumed by `execute_oracle_release`.
+/// If the buyer disputes the escrow (moving it out of `Pending`/`Funded`)
+/// before `release_at`, the pending release is voided instead of executed.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingOracleRelease {
+    pub escrow_id: u64,
+    pub oracle: Address,
+    /// Ledger at which the oracle verified delivery.
+    pub verified_at: u32,
+    /// Ledger after which the release may be executed.
+    pub release_at: u32,
 }
 
 #[contractevent(topics = ["fee_collected"], data_format = "vec")]

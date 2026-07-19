@@ -112,12 +112,13 @@ pub use types::{
     FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
     GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
     MediationOpenedEvent, MediationPhase, MediationProposedEvent, MediationSettledEvent,
-    MetadataVisibility, Milestone, MilestoneCompletedEvent, RefundHistoryEntry, RefundReason,
-    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, StorageRentEstimate,
-    TimeLock, TimeLockReleasedEvent, TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS,
-    CONTRACT_VERSION, CURRENT_SCHEMA_VERSION, DEFAULT_ARBITER_QUORUM_PERCENTAGE,
-    DEFAULT_EVIDENCE_WINDOW_LEDGERS, DEFAULT_MAX_ARBITERS_PER_ESCROW,
-    DEFAULT_MEDIATION_WINDOW_LEDGERS, DEFAULT_MIN_ARBITERS_REQUIRED, MAX_DESCRIPTION_SIZE,
+    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
+    StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
+    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
+    DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
+    DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
+    DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
     MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
 };
@@ -1102,6 +1103,15 @@ impl Contract {
         env.storage().persistent().get(&DataKey::Oracle)
     }
 
+    /// Record oracle intent to release an escrow's funds (#244).
+    ///
+    /// A single oracle attestation no longer moves funds directly. This only
+    /// records a `PendingOracleRelease`; the buyer has
+    /// `DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS` to raise a dispute via
+    /// `refund_escrow` (which moves the escrow to `Disputed`) before anyone
+    /// may call `execute_oracle_release` to finalize the transfer. If the
+    /// buyer disputes in time, the pending release is voided instead of
+    /// executed — the oracle alone can no longer drain the escrow.
     pub fn verify_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
@@ -1113,7 +1123,7 @@ impl Contract {
 
         oracle.require_auth();
 
-        let mut escrow: Escrow = env
+        let escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
@@ -1123,19 +1133,87 @@ impl Contract {
             return Err(ContractError::InvalidEscrowState);
         }
 
-        let _tracking_id = escrow
+        let tracking_id = escrow
             .tracking_id
             .clone()
             .ok_or(ContractError::Unauthorized)?;
 
-        // Oracle verified delivery, release funds
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PendingOracleRelease(escrow_id))
+        {
+            return Err(ContractError::OracleReleasePending);
+        }
+
+        let now = env.ledger().sequence();
+        let release_at = now + DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS;
+
+        let pending = PendingOracleRelease {
+            escrow_id,
+            oracle,
+            verified_at: now,
+            release_at,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingOracleRelease(escrow_id), &pending);
+
+        DeliveryVerifiedEvent {
+            escrow_id,
+            tracking_id,
+            release_at,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Read the pending oracle release recorded for an escrow, if any (#244).
+    pub fn get_pending_oracle_release(env: Env, escrow_id: u64) -> Option<PendingOracleRelease> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingOracleRelease(escrow_id))
+    }
+
+    /// Finalize an oracle-triggered release once its challenge window has elapsed (#244).
+    ///
+    /// Permissionless — anyone may call this to execute a verified delivery
+    /// once `release_at` has passed. Fails (and voids the pending release)
+    /// if the buyer disputed the escrow in the meantime, since the escrow
+    /// will no longer be `Pending`/`Funded`.
+    pub fn execute_oracle_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let pending: PendingOracleRelease = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingOracleRelease(escrow_id))
+            .ok_or(ContractError::NoPendingOracleRelease)?;
+
+        let now = env.ledger().sequence();
+        if now < pending.release_at {
+            return Err(ContractError::OracleChallengeWindowOpen);
+        }
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // The buyer may have raised a dispute (or otherwise moved the escrow
+        // out of Pending/Funded) during the challenge window. In that case
+        // the oracle's release intent is void — the dispute flow now owns
+        // this escrow's outcome, and this call permanently fails (the escrow
+        // can never return to Pending/Funded from a terminal or disputed
+        // state, so this pending release can never execute).
+        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
         let from_status = escrow.status.clone();
-
-        // Use Oracle as actor for status change
-        let actor = oracle.clone();
-
-        // Core release logic (duplicated from release_escrow for now to avoid complex refactor in this turn, or I can refactor it)
-        // Actually, let's try to keep it simple.
+        let actor = pending.oracle.clone();
 
         let mut fee_bps: u32 = env
             .storage()
@@ -1208,6 +1286,9 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingOracleRelease(escrow_id));
 
         FundsReleasedEvent {
             escrow_id,

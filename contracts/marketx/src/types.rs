@@ -838,3 +838,29 @@ pub struct DisputeConsensusReachedEvent {
     pub votes_for_release: u32,
     pub votes_for_refund: u32,
 }
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Escrow(u64),          // Maps an escrow ID to its State
+    ReentrancyLock,       // The operational execution guard key
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[contracttype]
+pub enum EscrowStatus {
+    Active,
+    Completed,
+    Disputed,
+    Refunded,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct Escrow {
+    pub id: u64,
+    pub token: Address,
+    pub amount: i128,
+    pub status: EscrowStatus,
+    // Other escrow fields...
+}

@@ -3237,3 +3237,68 @@ fn test_mediation_no_agreement_does_not_settle() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use soroban_sdk::{testutils::{Ledger, LedgerInfo}, Env};
+
+    #[test]
+    fn test_timelocked_upgrade_lifecycle() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MarketXContract);
+        let client = MarketXContractClient::new(&env, &contract_id);
+        
+        let admin = Address::generate(&env);
+        // (Set up your contract state's admin key here depending on initializers)
+
+        let mock_wasm_hash = BytesN::from_array(&env, &[1u8; 32]);
+
+        // Step A: Propose upgrade
+        env.ledger().set(LedgerInfo {
+            sequence: 1000,
+            ..env.ledger().get()
+        });
+        client.propose_upgrade(&admin, &mock_wasm_hash);
+
+        // Step B: Verify early execution attempts fail immediately
+        env.ledger().set(LedgerInfo {
+            sequence: 1000 + MIN_UPGRADE_DELAY_LEDGERS - 1,
+            ..env.ledger().get()
+        });
+        let result = client.try_execute_upgrade(&admin);
+        assert!(result.is_err(), "Should fail before timelock expiry");
+
+        // Step C: Verify validation passes exactly at or after expiration milestone
+        env.ledger().set(LedgerInfo {
+            sequence: 1000 + MIN_UPGRADE_DELAY_LEDGERS,
+            ..env.ledger().get()
+        });
+        let result = client.try_execute_upgrade(&admin);
+        assert!(result.is_ok(), "Should execute successfully post expiration");
+    }
+
+    #[test]
+    fn test_cancel_upgrade_flow() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, MarketXContract);
+        let client = MarketXContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        let mock_wasm_hash = BytesN::from_array(&env, &[2u8; 32]);
+
+        client.propose_upgrade(&admin, &mock_wasm_hash);
+        
+        // Cancel the upgrade proposal
+        client.cancel_upgrade(&admin);
+
+        // Ensure execution fails even if time has advanced, as the proposal key is gone
+        env.ledger().set(LedgerInfo {
+            sequence: 500_000,
+            ..env.ledger().get()
+        });
+        let result = client.try_execute_upgrade(&admin);
+        assert!(result.is_err(), "Cannot execute a cancelled proposal");
+    }
+}

@@ -157,6 +157,16 @@ Size limits enforced by error 60:
 
 ---
 
+## Oracle Release Challenge Window (175–177)
+
+| Code | Variant | Message | Recovery hint |
+|------|---------|---------|---------------|
+| 175 | `OracleReleasePending` | The oracle already recorded a pending release for this escrow. | Wait for `execute_oracle_release` or for the existing pending release to resolve. |
+| 176 | `NoPendingOracleRelease` | No pending oracle release exists for this escrow. | Call `verify_delivery` first. |
+| 177 | `OracleChallengeWindowOpen` | The oracle challenge window has not yet elapsed. | Wait until the recorded `release_at` ledger before retrying. |
+
+---
+
 ## Updating this document
 
 When adding a new `ContractError` variant:

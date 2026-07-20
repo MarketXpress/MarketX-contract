@@ -2476,8 +2476,27 @@ fn test_oracle_verified_delivery_release() {
     client.fund_escrow(&escrow_id);
     assert_eq!(token.balance(&client.address), amount);
 
-    // Call verify_delivery as oracle
+    // Oracle verifies delivery — this only records intent, funds stay put.
     client.verify_delivery(&escrow_id);
+    assert_eq!(token.balance(&seller), 0);
+    assert_eq!(token.balance(&client.address), amount);
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Funded);
+
+    let pending = client.get_pending_oracle_release(&escrow_id).unwrap();
+    assert_eq!(pending.oracle, oracle);
+
+    // Executing before the challenge window elapses is rejected.
+    assert_eq!(
+        client.try_execute_oracle_release(&escrow_id),
+        Err(Ok(ContractError::OracleChallengeWindowOpen))
+    );
+
+    // Advance past the challenge window with no dispute raised.
+    env.ledger()
+        .with_mut(|l| l.sequence_number = pending.release_at + 1);
+    client.execute_oracle_release(&escrow_id);
 
     // Verify funds released to seller
     assert_eq!(token.balance(&seller), amount);
@@ -2485,6 +2504,113 @@ fn test_oracle_verified_delivery_release() {
 
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+    assert!(client.get_pending_oracle_release(&escrow_id).is_none());
+}
+
+#[test]
+fn test_oracle_release_blocked_by_buyer_dispute() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    client.set_oracle(&oracle);
+
+    let tracking_id = Bytes::from_slice(&env, b"SHIP-99999");
+    let amount = 1000;
+    token_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &amount,
+        &None,
+        &None,
+        &None,
+        &Some(tracking_id.clone()),
+    );
+
+    client.fund_escrow(&escrow_id);
+
+    // Oracle claims delivery is verified — but it's compromised/wrong.
+    client.verify_delivery(&escrow_id);
+    let pending = client.get_pending_oracle_release(&escrow_id).unwrap();
+
+    // Buyer raises a dispute within the challenge window.
+    client.refund_escrow(
+        &escrow_id,
+        &buyer,
+        &amount,
+        &crate::types::RefundReason::ProductNotReceived,
+        &Bytes::from_slice(&env, b"evidence"),
+    );
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
+
+    // Advance past the challenge window; the oracle release must not proceed.
+    env.ledger()
+        .with_mut(|l| l.sequence_number = pending.release_at + 1);
+    assert_eq!(
+        client.try_execute_oracle_release(&escrow_id),
+        Err(Ok(ContractError::InvalidEscrowState))
+    );
+
+    // Funds remain in the contract — no drain occurred.
+    assert_eq!(token.balance(&seller), 0);
+    assert_eq!(token.balance(&client.address), amount);
+
+    // The stale pending release can never execute again: the escrow is
+    // permanently out of Pending/Funded once disputed.
+    assert_eq!(
+        client.try_execute_oracle_release(&escrow_id),
+        Err(Ok(ContractError::InvalidEscrowState))
+    );
+}
+
+#[test]
+fn test_verify_delivery_rejects_duplicate_pending_release() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    client.set_oracle(&oracle);
+
+    let amount = 1000;
+    token_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &amount,
+        &None,
+        &None,
+        &None,
+        &Some(Bytes::from_slice(&env, b"SHIP-DUP")),
+    );
+
+    client.fund_escrow(&escrow_id);
+    client.verify_delivery(&escrow_id);
+
+    assert_eq!(
+        client.try_verify_delivery(&escrow_id),
+        Err(Ok(ContractError::OracleReleasePending))
+    );
 }
 
 #[test]

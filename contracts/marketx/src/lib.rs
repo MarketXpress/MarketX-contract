@@ -57,12 +57,12 @@
 //! ### Multi-item Escrow
 //! ```ignore
 //! let items = vec![
-//!     EscrowItem { amount: 500, released: false, description: None },
-//!     EscrowItem { amount: 500, released: false, description: None },
+//!      EscrowItem { amount: 500, released: false, description: None },
+//!      EscrowItem { amount: 500, released: false, description: None },
 //! ];
 //!
 //! let escrow_id = contract.create_escrow(
-//!     &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
+//!      &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
 //! );
 //!
 //! // Release individual items
@@ -190,6 +190,19 @@ impl Contract {
             return Err(ContractError::ContractPaused);
         }
 
+        Ok(())
+    }
+
+    fn assert_token_not_paused(env: &Env, token: &Address) -> Result<(), ContractError> {
+        let is_paused: bool = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TokenCircuitBreaker(token.clone()))
+            .unwrap_or(false);
+
+        if is_paused {
+            return Err(ContractError::ContractPaused);
+        }
         Ok(())
     }
 
@@ -443,21 +456,6 @@ impl Contract {
 #[contractimpl]
 impl Contract {
     /// Initialize the contract with admin, fee collector, and fee settings.
-    ///
-    /// # Arguments
-    /// * `admin` - The contract administrator address
-    /// * `fee_collector` - Address that receives transaction fees
-    /// * `fee_bps` - Fee percentage in basis points (100 bps = 1%)
-    ///
-    /// # Requirements
-    /// - Must be called exactly once during contract deployment
-    /// - `fee_bps` should be reasonable (typically < 1000 bps = 10%)
-    ///
-    /// # Events
-    /// Emits no events during initialization
-    ///
-    /// # Errors
-    /// This function cannot fail as it's the initialization function
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -509,19 +507,6 @@ impl Contract {
     }
 
     /// Pause the contract, disabling all critical operations.
-    ///
-    /// This is a safety mechanism that can be used in emergencies.
-    /// When paused, operations like creating, funding, and releasing escrows
-    /// will fail with `ContractError::ContractPaused`.
-    ///
-    /// # Requirements
-    /// - Caller must be the contract admin
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// * `NotAdmin` - If caller is not the contract admin
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
@@ -529,18 +514,6 @@ impl Contract {
     }
 
     /// Unpause the contract, re-enabling all operations.
-    ///
-    /// This reverses the effects of `pause()` and allows normal operation
-    /// to resume.
-    ///
-    /// # Requirements
-    /// - Caller must be the contract admin
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// * `NotAdmin` - If caller is not the contract admin
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
@@ -548,15 +521,6 @@ impl Contract {
     }
 
     /// Check if the contract is currently paused.
-    ///
-    /// # Returns
-    /// `true` if the contract is paused, `false` otherwise
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// This function cannot fail
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -628,18 +592,15 @@ impl Contract {
         // Process items
         let escrow_items = match items {
             Some(items_vec) => {
-                // Check max items limit
                 if items_vec.len() > MAX_ITEMS_PER_ESCROW {
                     return Err(ContractError::TooManyItems);
                 }
 
-                // Validate item amounts sum to total
                 let items_sum: i128 = items_vec.iter().map(|item| item.amount).sum();
                 if items_sum != amount {
                     return Err(ContractError::ItemAmountInvalid);
                 }
 
-                // Validate per-item descriptions
                 for item in items_vec.iter() {
                     if let Some(ref desc) = item.description {
                         Self::validate_bytes_size(desc, MAX_DESCRIPTION_SIZE)?;
@@ -679,7 +640,6 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
-        // Emit event
         let event = EscrowCreatedEvent {
             escrow_id,
             buyer,
@@ -696,51 +656,6 @@ impl Contract {
     }
 
     /// Create a new escrow with optional metadata and multiple items.
-    ///
-    /// # Arguments
-    /// * `buyer` - The buyer's address
-    /// * `seller` - The seller's address
-    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
-    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
-    /// * `metadata` - Optional metadata (max 1KB)
-    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
-    ///               If provided, only this address may call `resolve_dispute` for this escrow.
-    /// * `items` - Optional array of items/milestones. If provided, each item can be released
-    ///             independently using `release_item`. The sum of item amounts must equal
-    ///             the total escrow amount.
-    ///
-    /// # Native XLM Support
-    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
-    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
-    /// making it fully compatible with all escrow operations.
-    ///
-    /// # Example - Native XLM Escrow with Items
-    /// ```ignore
-    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
-    /// let amount: i128 = 100_000_000; // 10 XLM
-    /// let xlm_address = /* native XLM SAC address */;
-    ///
-    /// // Create items for a multi-product purchase
-    /// let items = vec![
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
-    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
-    /// ];
-    ///
-    /// let escrow_id = client.create_escrow(
-    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
-    /// );
-    ///
-    /// // Later, release individual items as they're delivered
-    /// client.release_item(&escrow_id, &0); // Release product 1
-    /// client.release_item(&escrow_id, &1); // Release product 2
-    /// ```
-    ///
-    /// # Errors
-    /// * `MetadataTooLarge` - If metadata exceeds 1KB
-    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
-    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
-    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
     pub fn create_escrow(
         env: Env,
         buyer: Address,
@@ -769,7 +684,6 @@ impl Contract {
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
-    /// Useful for cart checkouts involving multiple sellers.
     pub fn create_bulk_escrows(
         env: Env,
         buyer: Address,
@@ -790,7 +704,7 @@ impl Contract {
                 request.metadata.clone(),
                 request.arbiter.clone(),
                 request.items.clone(),
-                None, // tracking_id
+                None,
             )?;
             ids.push_back(id);
         }
@@ -885,18 +799,10 @@ impl Contract {
     /// Get the items for an escrow.
     pub fn get_escrow_items(env: Env, escrow_id: u64) -> Option<Vec<EscrowItem>> {
         let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
-
         escrow.map(|e| e.items)
     }
 
     /// Get a paginated list of escrows.
-    ///
-    /// # Arguments
-    /// * `start` - The starting escrow ID (1-based)
-    /// * `limit` - Maximum number of escrows to return
-    ///
-    /// # Returns
-    /// A vector of optional escrows. Missing escrows (if any) are returned as None.
     pub fn get_escrows(env: Env, start: u64, limit: u32) -> Vec<Option<Escrow>> {
         let counter: u64 = env
             .storage()
@@ -906,15 +812,12 @@ impl Contract {
 
         let mut result = Vec::new(&env);
 
-        // Handle empty case or invalid start
         if counter == 0 || start == 0 || start > counter {
             return result;
         }
 
-        // Calculate end bound (inclusive)
         let end = (start + limit as u64 - 1).min(counter);
 
-        // Iterate through IDs and fetch escrows
         for id in start..=end {
             let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(id));
             result.push_back(escrow);
@@ -977,19 +880,21 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    /// Returns a structured summary containing comprehensive contract state metrics.
     pub fn analytics_summary(env: Env) -> GlobalDisputeAnalytics {
-        let total_escrows = Self::get_total_escrows(env.clone());
-        let released_count = Self::get_total_released_count(env.clone());
-        let refunded_count = Self::get_total_refunded_count(env.clone());
-        let disputed_count = Self::get_total_disputed_count(env.clone());
-        let cancelled_count = Self::get_total_cancelled_count(env.clone());
-
-        let failures = refunded_count + disputed_count + cancelled_count;
-        let failure_rate_bps = ((failures as u64) * 10_000)
-            .checked_div(total_escrows)
-            .unwrap_or(0) as u32;
-
         GlobalDisputeAnalytics {
+            total_escrows: Self::get_total_escrows(env.clone()),
+            total_funded_amount: Self::get_total_funded_amount(env.clone()),
+            total_released_amount: Self::get_total_released_amount(env.clone()),
+            total_refunded_amount: env.storage().persistent().get(&DataKey::TotalRefundedAmount).unwrap_or(0),
+            total_released_count: Self::get_total_released_count(env.clone()),
+            total_refunded_count: Self::get_total_refunded_count(env.clone()),
+            total_disputed_count: Self::get_total_disputed_count(env.clone()),
+            total_cancelled_count: Self::get_total_cancelled_count(env.clone()),
+            total_fees_collected: env.storage().persistent().get(&DataKey::TotalFeesCollected).unwrap_or(0),
+        }
+    }
+}
             total_escrows,
             released_count,
             refunded_count,

@@ -193,19 +193,6 @@ impl Contract {
         Ok(())
     }
 
-    fn assert_token_not_paused(env: &Env, token: &Address) -> Result<(), ContractError> {
-        let is_paused: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::TokenCircuitBreaker(token.clone()))
-            .unwrap_or(false);
-
-        if is_paused {
-            return Err(ContractError::ContractPaused);
-        }
-        Ok(())
-    }
-
     fn assert_disputes_enabled(env: &Env) -> Result<(), ContractError> {
         if !Self::disputes_enabled(env) {
             return Err(ContractError::FeatureDisabled);
@@ -882,19 +869,18 @@ impl Contract {
 
     /// Returns a structured summary containing comprehensive contract state metrics.
     pub fn analytics_summary(env: Env) -> GlobalDisputeAnalytics {
+        let total_escrows = Self::get_total_escrows(env.clone());
+        let released_count = Self::get_total_released_count(env.clone());
+        let refunded_count = Self::get_total_refunded_count(env.clone());
+        let disputed_count = Self::get_total_disputed_count(env.clone());
+        let cancelled_count = Self::get_total_cancelled_count(env.clone());
+
+        let failures = refunded_count + disputed_count + cancelled_count;
+        let failure_rate_bps = ((failures as u64) * 10_000)
+            .checked_div(total_escrows)
+            .unwrap_or(0) as u32;
+
         GlobalDisputeAnalytics {
-            total_escrows: Self::get_total_escrows(env.clone()),
-            total_funded_amount: Self::get_total_funded_amount(env.clone()),
-            total_released_amount: Self::get_total_released_amount(env.clone()),
-            total_refunded_amount: env.storage().persistent().get(&DataKey::TotalRefundedAmount).unwrap_or(0),
-            total_released_count: Self::get_total_released_count(env.clone()),
-            total_refunded_count: Self::get_total_refunded_count(env.clone()),
-            total_disputed_count: Self::get_total_disputed_count(env.clone()),
-            total_cancelled_count: Self::get_total_cancelled_count(env.clone()),
-            total_fees_collected: env.storage().persistent().get(&DataKey::TotalFeesCollected).unwrap_or(0),
-        }
-    }
-}
             total_escrows,
             released_count,
             refunded_count,

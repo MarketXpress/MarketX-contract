@@ -3237,25 +3237,3 @@ fn test_mediation_no_agreement_does_not_settle() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
-
-#![cfg(test)]
-use super::{MarketXContract, MarketXContractClient, Error};
-use crate::types::{Escrow, EscrowStatus, DataKey};
-use soroban_sdk::{contract, contractimpl, Env, Address, symbol_short};
-
-// Mock malicious token that attempts to call back into MarketX during a transfer
-#[contract]
-pub struct MaliciousToken;
-
-#[contractimpl]
-impl MaliciousToken {
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        // Attempt a malicious recursive execution back into the caller contract
-        let marketx_id = env.ledger().get_template_context(); // Assuming standard test reference
-        let client = MarketXContractClient::new(&env, &marketx_id);
-        
-        // This structural recursion path must cleanly abort due to the transient guard lock
-        let exploit_call = client.try_release_escrow(&0, &to);
-        assert!(exploit_call.is_err());
-    }
-}

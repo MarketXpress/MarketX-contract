@@ -82,6 +82,12 @@ pub enum ContractError {
     MigrationStorageError = 173,
     /// Migration failed: invalid migration target version.
     MigrationInvalidTargetVersion = 174,
+    /// Oracle already has an unresolved pending release recorded for this escrow (#244).
+    OracleReleasePending = 175,
+    /// No pending oracle release exists for this escrow (#244).
+    NoPendingOracleRelease = 176,
+    /// The oracle challenge window has not yet elapsed (#244).
+    OracleChallengeWindowOpen = 177,
     /// Arbiter address matches the escrow's buyer or seller (#243).
-    ArbiterConflictOfInterest = 175,
+    ArbiterConflictOfInterest = 178,
 }

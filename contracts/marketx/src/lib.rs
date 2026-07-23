@@ -57,12 +57,12 @@
 //! ### Multi-item Escrow
 //! ```ignore
 //! let items = vec![
-//!     EscrowItem { amount: 500, released: false, description: None },
-//!     EscrowItem { amount: 500, released: false, description: None },
+//!      EscrowItem { amount: 500, released: false, description: None },
+//!      EscrowItem { amount: 500, released: false, description: None },
 //! ];
 //!
 //! let escrow_id = contract.create_escrow(
-//!     &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
+//!      &buyer, &seller, &token_address, &1000, &None, &None, &Some(items)
 //! );
 //!
 //! // Release individual items
@@ -112,12 +112,13 @@ pub use types::{
     FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
     GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
     MediationOpenedEvent, MediationPhase, MediationProposedEvent, MediationSettledEvent,
-    MetadataVisibility, Milestone, MilestoneCompletedEvent, RefundHistoryEntry, RefundReason,
-    RefundRequest, RefundRequestedEvent, RefundStatus, StatusChangeEvent, StorageRentEstimate,
-    TimeLock, TimeLockReleasedEvent, TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS,
-    CONTRACT_VERSION, CURRENT_SCHEMA_VERSION, DEFAULT_ARBITER_QUORUM_PERCENTAGE,
-    DEFAULT_EVIDENCE_WINDOW_LEDGERS, DEFAULT_MAX_ARBITERS_PER_ESCROW,
-    DEFAULT_MEDIATION_WINDOW_LEDGERS, DEFAULT_MIN_ARBITERS_REQUIRED, MAX_DESCRIPTION_SIZE,
+    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease,
+    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
+    StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
+    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
+    DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
+    DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
+    DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
     MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
 };
@@ -442,21 +443,6 @@ impl Contract {
 #[contractimpl]
 impl Contract {
     /// Initialize the contract with admin, fee collector, and fee settings.
-    ///
-    /// # Arguments
-    /// * `admin` - The contract administrator address
-    /// * `fee_collector` - Address that receives transaction fees
-    /// * `fee_bps` - Fee percentage in basis points (100 bps = 1%)
-    ///
-    /// # Requirements
-    /// - Must be called exactly once during contract deployment
-    /// - `fee_bps` should be reasonable (typically < 1000 bps = 10%)
-    ///
-    /// # Events
-    /// Emits no events during initialization
-    ///
-    /// # Errors
-    /// This function cannot fail as it's the initialization function
     pub fn initialize(
         env: Env,
         admin: Address,
@@ -508,19 +494,6 @@ impl Contract {
     }
 
     /// Pause the contract, disabling all critical operations.
-    ///
-    /// This is a safety mechanism that can be used in emergencies.
-    /// When paused, operations like creating, funding, and releasing escrows
-    /// will fail with `ContractError::ContractPaused`.
-    ///
-    /// # Requirements
-    /// - Caller must be the contract admin
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// * `NotAdmin` - If caller is not the contract admin
     pub fn pause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &true);
@@ -528,18 +501,6 @@ impl Contract {
     }
 
     /// Unpause the contract, re-enabling all operations.
-    ///
-    /// This reverses the effects of `pause()` and allows normal operation
-    /// to resume.
-    ///
-    /// # Requirements
-    /// - Caller must be the contract admin
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// * `NotAdmin` - If caller is not the contract admin
     pub fn unpause(env: Env) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
         env.storage().persistent().set(&DataKey::Paused, &false);
@@ -547,15 +508,6 @@ impl Contract {
     }
 
     /// Check if the contract is currently paused.
-    ///
-    /// # Returns
-    /// `true` if the contract is paused, `false` otherwise
-    ///
-    /// # Events
-    /// Emits no events
-    ///
-    /// # Errors
-    /// This function cannot fail
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -630,18 +582,15 @@ impl Contract {
         // Process items
         let escrow_items = match items {
             Some(items_vec) => {
-                // Check max items limit
                 if items_vec.len() > MAX_ITEMS_PER_ESCROW {
                     return Err(ContractError::TooManyItems);
                 }
 
-                // Validate item amounts sum to total
                 let items_sum: i128 = items_vec.iter().map(|item| item.amount).sum();
                 if items_sum != amount {
                     return Err(ContractError::ItemAmountInvalid);
                 }
 
-                // Validate per-item descriptions
                 for item in items_vec.iter() {
                     if let Some(ref desc) = item.description {
                         Self::validate_bytes_size(desc, MAX_DESCRIPTION_SIZE)?;
@@ -681,7 +630,6 @@ impl Contract {
             .persistent()
             .set(&DataKey::EscrowHash(hash), &escrow_id);
 
-        // Emit event
         let event = EscrowCreatedEvent {
             escrow_id,
             buyer,
@@ -698,51 +646,6 @@ impl Contract {
     }
 
     /// Create a new escrow with optional metadata and multiple items.
-    ///
-    /// # Arguments
-    /// * `buyer` - The buyer's address
-    /// * `seller` - The seller's address
-    /// * `token` - The token contract address (can be native XLM or any SEP-41 compatible token)
-    /// * `amount` - The total escrow amount (in the token's base unit, e.g., stroops for XLM)
-    /// * `metadata` - Optional metadata (max 1KB)
-    /// * `arbiter` - Optional arbiter mutually agreed upon by buyer and seller.
-    ///               If provided, only this address may call `resolve_dispute` for this escrow.
-    /// * `items` - Optional array of items/milestones. If provided, each item can be released
-    ///             independently using `release_item`. The sum of item amounts must equal
-    ///             the total escrow amount.
-    ///
-    /// # Native XLM Support
-    /// To create an escrow with native XLM, pass the Stellar Asset Contract address for XLM
-    /// as the `token` parameter. The native XLM SAC implements the SEP-41 Token Interface,
-    /// making it fully compatible with all escrow operations.
-    ///
-    /// # Example - Native XLM Escrow with Items
-    /// ```ignore
-    /// // Amount is in stroops: 1 XLM = 10,000,000 stroops
-    /// let amount: i128 = 100_000_000; // 10 XLM
-    /// let xlm_address = /* native XLM SAC address */;
-    ///
-    /// // Create items for a multi-product purchase
-    /// let items = vec![
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 1: 3 XLM
-    ///     EscrowItem { amount: 40_000_000, released: false, description: None }, // Product 2: 4 XLM
-    ///     EscrowItem { amount: 30_000_000, released: false, description: None }, // Product 3: 3 XLM
-    /// ];
-    ///
-    /// let escrow_id = client.create_escrow(
-    ///     &buyer, &seller, &xlm_address, &amount, &None, &None, &Some(items)
-    /// );
-    ///
-    /// // Later, release individual items as they're delivered
-    /// client.release_item(&escrow_id, &0); // Release product 1
-    /// client.release_item(&escrow_id, &1); // Release product 2
-    /// ```
-    ///
-    /// # Errors
-    /// * `MetadataTooLarge` - If metadata exceeds 1KB
-    /// * `DuplicateEscrow` - If an escrow with same buyer, seller, and metadata exists
-    /// * `TooManyItems` - If more than MAX_ITEMS_PER_ESCROW items are provided
-    /// * `ItemAmountInvalid` - If item amounts don't sum to the total escrow amount
     pub fn create_escrow(
         env: Env,
         buyer: Address,
@@ -771,7 +674,6 @@ impl Contract {
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
-    /// Useful for cart checkouts involving multiple sellers.
     pub fn create_bulk_escrows(
         env: Env,
         buyer: Address,
@@ -792,7 +694,7 @@ impl Contract {
                 request.metadata.clone(),
                 request.arbiter.clone(),
                 request.items.clone(),
-                None, // tracking_id
+                None,
             )?;
             ids.push_back(id);
         }
@@ -887,18 +789,10 @@ impl Contract {
     /// Get the items for an escrow.
     pub fn get_escrow_items(env: Env, escrow_id: u64) -> Option<Vec<EscrowItem>> {
         let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(escrow_id));
-
         escrow.map(|e| e.items)
     }
 
     /// Get a paginated list of escrows.
-    ///
-    /// # Arguments
-    /// * `start` - The starting escrow ID (1-based)
-    /// * `limit` - Maximum number of escrows to return
-    ///
-    /// # Returns
-    /// A vector of optional escrows. Missing escrows (if any) are returned as None.
     pub fn get_escrows(env: Env, start: u64, limit: u32) -> Vec<Option<Escrow>> {
         let counter: u64 = env
             .storage()
@@ -908,15 +802,12 @@ impl Contract {
 
         let mut result = Vec::new(&env);
 
-        // Handle empty case or invalid start
         if counter == 0 || start == 0 || start > counter {
             return result;
         }
 
-        // Calculate end bound (inclusive)
         let end = (start + limit as u64 - 1).min(counter);
 
-        // Iterate through IDs and fetch escrows
         for id in start..=end {
             let escrow: Option<Escrow> = env.storage().persistent().get(&DataKey::Escrow(id));
             result.push_back(escrow);
@@ -979,6 +870,7 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    /// Returns a structured summary containing comprehensive contract state metrics.
     pub fn analytics_summary(env: Env) -> GlobalDisputeAnalytics {
         let total_escrows = Self::get_total_escrows(env.clone());
         let released_count = Self::get_total_released_count(env.clone());
@@ -1105,6 +997,15 @@ impl Contract {
         env.storage().persistent().get(&DataKey::Oracle)
     }
 
+    /// Record oracle intent to release an escrow's funds (#244).
+    ///
+    /// A single oracle attestation no longer moves funds directly. This only
+    /// records a `PendingOracleRelease`; the buyer has
+    /// `DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS` to raise a dispute via
+    /// `refund_escrow` (which moves the escrow to `Disputed`) before anyone
+    /// may call `execute_oracle_release` to finalize the transfer. If the
+    /// buyer disputes in time, the pending release is voided instead of
+    /// executed — the oracle alone can no longer drain the escrow.
     pub fn verify_delivery(env: Env, escrow_id: u64) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
 
@@ -1116,7 +1017,7 @@ impl Contract {
 
         oracle.require_auth();
 
-        let mut escrow: Escrow = env
+        let escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
@@ -1126,19 +1027,87 @@ impl Contract {
             return Err(ContractError::InvalidEscrowState);
         }
 
-        let _tracking_id = escrow
+        let tracking_id = escrow
             .tracking_id
             .clone()
             .ok_or(ContractError::Unauthorized)?;
 
-        // Oracle verified delivery, release funds
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::PendingOracleRelease(escrow_id))
+        {
+            return Err(ContractError::OracleReleasePending);
+        }
+
+        let now = env.ledger().sequence();
+        let release_at = now + DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS;
+
+        let pending = PendingOracleRelease {
+            escrow_id,
+            oracle,
+            verified_at: now,
+            release_at,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingOracleRelease(escrow_id), &pending);
+
+        DeliveryVerifiedEvent {
+            escrow_id,
+            tracking_id,
+            release_at,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Read the pending oracle release recorded for an escrow, if any (#244).
+    pub fn get_pending_oracle_release(env: Env, escrow_id: u64) -> Option<PendingOracleRelease> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PendingOracleRelease(escrow_id))
+    }
+
+    /// Finalize an oracle-triggered release once its challenge window has elapsed (#244).
+    ///
+    /// Permissionless — anyone may call this to execute a verified delivery
+    /// once `release_at` has passed. Fails (and voids the pending release)
+    /// if the buyer disputed the escrow in the meantime, since the escrow
+    /// will no longer be `Pending`/`Funded`.
+    pub fn execute_oracle_release(env: Env, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+
+        let pending: PendingOracleRelease = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingOracleRelease(escrow_id))
+            .ok_or(ContractError::NoPendingOracleRelease)?;
+
+        let now = env.ledger().sequence();
+        if now < pending.release_at {
+            return Err(ContractError::OracleChallengeWindowOpen);
+        }
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        // The buyer may have raised a dispute (or otherwise moved the escrow
+        // out of Pending/Funded) during the challenge window. In that case
+        // the oracle's release intent is void — the dispute flow now owns
+        // this escrow's outcome, and this call permanently fails (the escrow
+        // can never return to Pending/Funded from a terminal or disputed
+        // state, so this pending release can never execute).
+        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
         let from_status = escrow.status.clone();
-
-        // Use Oracle as actor for status change
-        let actor = oracle.clone();
-
-        // Core release logic (duplicated from release_escrow for now to avoid complex refactor in this turn, or I can refactor it)
-        // Actually, let's try to keep it simple.
+        let actor = pending.oracle.clone();
 
         let mut fee_bps: u32 = env
             .storage()
@@ -1211,6 +1180,9 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
+        env.storage()
+            .persistent()
+            .remove(&DataKey::PendingOracleRelease(escrow_id));
 
         FundsReleasedEvent {
             escrow_id,

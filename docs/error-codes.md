@@ -157,11 +157,21 @@ Size limits enforced by error 60:
 
 ---
 
-## Dispute Resolution — Arbiter Conflict of Interest (175)
+## Oracle Release Challenge Window (175–177)
 
 | Code | Variant | Message | Recovery hint |
 |------|---------|---------|---------------|
-| 175 | `ArbiterConflictOfInterest` | The arbiter address matches the escrow's buyer or seller. | Choose an arbiter that is not a party to the escrow. |
+| 175 | `OracleReleasePending` | The oracle already recorded a pending release for this escrow. | Wait for `execute_oracle_release` or for the existing pending release to resolve. |
+| 176 | `NoPendingOracleRelease` | No pending oracle release exists for this escrow. | Call `verify_delivery` first. |
+| 177 | `OracleChallengeWindowOpen` | The oracle challenge window has not yet elapsed. | Wait until the recorded `release_at` ledger before retrying. |
+
+---
+
+## Dispute Resolution — Arbiter Conflict of Interest (178)
+
+| Code | Variant | Message | Recovery hint |
+|------|---------|---------|---------------|
+| 178 | `ArbiterConflictOfInterest` | The arbiter address matches the escrow's buyer or seller. | Choose an arbiter that is not a party to the escrow. |
 
 ---
 

@@ -307,8 +307,24 @@ export const MARKETX_ERRORS: Readonly<Record<number, ContractErrorInfo>> = {
     message: 'Migration failed: invalid migration target version.',
     recovery: '',
   },
-  // ── Dispute Resolution — Arbiter Conflict of Interest ───────────────────────
+  // ── Oracle Release Challenge Window ─────────────────────────────────────────
   175: {
+    code: 'OracleReleasePending',
+    message: 'The oracle already recorded a pending release for this escrow.',
+    recovery: 'Wait for execute_oracle_release or for the existing pending release to resolve.',
+  },
+  176: {
+    code: 'NoPendingOracleRelease',
+    message: 'No pending oracle release exists for this escrow.',
+    recovery: 'Call verify_delivery first.',
+  },
+  177: {
+    code: 'OracleChallengeWindowOpen',
+    message: 'The oracle challenge window has not yet elapsed.',
+    recovery: 'Wait until the recorded release_at ledger before retrying.',
+  },
+  // ── Dispute Resolution — Arbiter Conflict of Interest ───────────────────────
+  178: {
     code: 'ArbiterConflictOfInterest',
     message: "The arbiter address matches the escrow's buyer or seller.",
     recovery: 'Choose an arbiter that is not a party to the escrow.',

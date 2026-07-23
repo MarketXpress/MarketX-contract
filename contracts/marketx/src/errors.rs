@@ -88,4 +88,6 @@ pub enum ContractError {
     NoPendingOracleRelease = 176,
     /// The oracle challenge window has not yet elapsed (#244).
     OracleChallengeWindowOpen = 177,
+    /// Arbiter address matches the escrow's buyer or seller (#243).
+    ArbiterConflictOfInterest = 178,
 }

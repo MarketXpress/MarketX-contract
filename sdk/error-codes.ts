@@ -323,6 +323,12 @@ export const MARKETX_ERRORS: Readonly<Record<number, ContractErrorInfo>> = {
     message: 'The oracle challenge window has not yet elapsed.',
     recovery: 'Wait until the recorded release_at ledger before retrying.',
   },
+  // ── Dispute Resolution — Arbiter Conflict of Interest ───────────────────────
+  178: {
+    code: 'ArbiterConflictOfInterest',
+    message: "The arbiter address matches the escrow's buyer or seller.",
+    recovery: 'Choose an arbiter that is not a party to the escrow.',
+  },
 } as const;
 
 /**

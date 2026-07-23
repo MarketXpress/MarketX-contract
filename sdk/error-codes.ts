@@ -307,6 +307,12 @@ export const MARKETX_ERRORS: Readonly<Record<number, ContractErrorInfo>> = {
     message: 'Migration failed: invalid migration target version.',
     recovery: '',
   },
+  // ── Dispute Resolution — Arbiter Conflict of Interest ───────────────────────
+  175: {
+    code: 'ArbiterConflictOfInterest',
+    message: "The arbiter address matches the escrow's buyer or seller.",
+    recovery: 'Choose an arbiter that is not a party to the escrow.',
+  },
 } as const;
 
 /**

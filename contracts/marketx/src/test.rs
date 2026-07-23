@@ -2711,6 +2711,85 @@ fn test_create_escrow_rejects_zero_arbiter() {
 }
 
 #[test]
+fn test_create_escrow_rejects_arbiter_equal_to_buyer_or_seller() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250, &0, &0);
+
+    // Buyer appointing themselves as arbiter must be rejected.
+    let result = client.try_create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &Some(buyer.clone()),
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::ArbiterConflictOfInterest)));
+
+    // Seller appointed as arbiter must also be rejected.
+    let result = client.try_create_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &1000,
+        &None,
+        &Some(seller.clone()),
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::ArbiterConflictOfInterest)));
+}
+
+#[test]
+fn test_configure_multi_arbiters_rejects_conflicted_arbiter() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+    let honest_arbiter = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &250, &0, &0);
+
+    let escrow_id =
+        client.create_escrow(&buyer, &seller, &token, &1000, &None, &None, &None, &None);
+
+    // Buyer tries to sneak themselves into the multi-arbiter set.
+    let mut arbiters = Vec::new(&env);
+    arbiters.push_back(honest_arbiter.clone());
+    arbiters.push_back(buyer.clone());
+
+    let result = client.try_configure_multi_arbiters(&escrow_id, &arbiters, &2);
+    assert_eq!(result, Err(Ok(ContractError::ArbiterConflictOfInterest)));
+
+    // Seller in the set is rejected too.
+    let mut arbiters = Vec::new(&env);
+    arbiters.push_back(honest_arbiter.clone());
+    arbiters.push_back(seller.clone());
+
+    let result = client.try_configure_multi_arbiters(&escrow_id, &arbiters, &2);
+    assert_eq!(result, Err(Ok(ContractError::ArbiterConflictOfInterest)));
+
+    // A clean set of independent arbiters is accepted.
+    let other_arbiter = Address::generate(&env);
+    let mut arbiters = Vec::new(&env);
+    arbiters.push_back(honest_arbiter);
+    arbiters.push_back(other_arbiter);
+
+    client.configure_multi_arbiters(&escrow_id, &arbiters, &2);
+    assert!(client.get_arbiters_config(&escrow_id).is_some());
+}
+
+#[test]
 fn test_create_bulk_escrows_rejects_zero_buyer() {
     let (env, client) = setup();
     let admin = Address::generate(&env);

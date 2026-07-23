@@ -82,4 +82,6 @@ pub enum ContractError {
     MigrationStorageError = 173,
     /// Migration failed: invalid migration target version.
     MigrationInvalidTargetVersion = 174,
+    /// Arbiter address matches the escrow's buyer or seller (#243).
+    ArbiterConflictOfInterest = 175,
 }

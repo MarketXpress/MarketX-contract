@@ -609,6 +609,9 @@ impl Contract {
         Self::check_zero_address(&env, &token)?;
         if let Some(ref a) = arbiter {
             Self::check_zero_address(&env, a)?;
+            if *a == buyer || *a == seller {
+                return Err(ContractError::ArbiterConflictOfInterest);
+            }
         }
 
         Self::assert_token_not_paused(&env, &token)?;
@@ -2667,6 +2670,15 @@ impl Contract {
         // Validate arbiters list
         if arbiters.is_empty() {
             return Err(ContractError::ArbiterStakeInsufficient);
+        }
+
+        // Reject any arbiter that is a party to the escrow — an arbiter who
+        // is also the buyer or seller could rule in their own favor with no
+        // independent check (#243).
+        for arbiter in arbiters.iter() {
+            if arbiter == escrow.buyer || arbiter == escrow.seller {
+                return Err(ContractError::ArbiterConflictOfInterest);
+            }
         }
 
         let max_arbiters = env

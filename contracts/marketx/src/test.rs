@@ -657,7 +657,7 @@ fn buyer_can_release_escrow() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
 
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -670,6 +670,7 @@ fn buyer_can_release_escrow() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
     assert_eq!(token.balance(&seller), 1000);
@@ -703,6 +704,33 @@ fn release_fails_if_not_pending() {
             .persistent()
             .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
     });
+
+    let result = client.try_release_escrow(&escrow_id);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
+fn release_fails_if_pending_unfunded() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
 
     let result = client.try_release_escrow(&escrow_id);
     assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
@@ -755,6 +783,39 @@ fn buyer_can_fund_escrow() {
 
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Funded);
+}
+
+#[test]
+fn refund_fails_if_pending_unfunded() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    let result = client.try_refund_escrow(
+        &escrow_id,
+        &buyer,
+        &1000,
+        &crate::types::RefundReason::Other,
+        &Bytes::from_slice(&env, b"refund-evidence"),
+    );
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
 }
 
 #[test]
@@ -895,6 +956,44 @@ fn accept_cancellation_fails_without_prior_proposal() {
 }
 
 #[test]
+fn accept_cancellation_fails_if_pending_unfunded() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    env.as_contract(&client.address, || {
+        let mut escrow: crate::types::Escrow = env
+            .storage()
+            .persistent()
+            .get(&crate::types::DataKey::Escrow(escrow_id))
+            .unwrap();
+        escrow.cancellation_proposer = Some(buyer.clone());
+        env.storage()
+            .persistent()
+            .set(&crate::types::DataKey::Escrow(escrow_id), &escrow);
+    });
+
+    let result = client.try_accept_cancellation(&escrow_id, &seller);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
+}
+
+#[test]
 fn cancellation_fails_after_partial_item_release() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
@@ -919,7 +1018,7 @@ fn cancellation_fails_after_partial_item_release() {
         description: None,
     });
 
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
     let escrow_id = client.create_escrow(
         &buyer,
         &seller,
@@ -931,6 +1030,7 @@ fn cancellation_fails_after_partial_item_release() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
     client.release_item(&escrow_id, &0u32);
 
     let result = client.try_propose_cancellation(&escrow_id, &buyer);
@@ -1040,7 +1140,7 @@ fn test_arbiter_can_resolve_dispute() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
 
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1052,6 +1152,8 @@ fn test_arbiter_can_resolve_dispute() {
         &None,
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     env.as_contract(&client.address, || {
         let mut escrow: crate::types::Escrow = env
@@ -1088,7 +1190,7 @@ fn test_release_emits_funds_and_status_change_events() {
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1100,6 +1202,7 @@ fn test_release_emits_funds_and_status_change_events() {
         &None,
         &None,
     );
+    client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
     let events = env.events().all().filter_by_contract(&client.address);
@@ -1111,7 +1214,7 @@ fn test_release_emits_funds_and_status_change_events() {
     };
     let expected_status = StatusChangeEvent {
         escrow_id,
-        from_status: crate::types::EscrowStatus::Pending,
+        from_status: crate::types::EscrowStatus::Funded,
         to_status: crate::types::EscrowStatus::Released,
         actor: buyer,
     };
@@ -1140,7 +1243,7 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
 
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1152,6 +1255,8 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
         &None,
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     env.as_contract(&client.address, || {
         let mut escrow: crate::types::Escrow = env
@@ -1189,7 +1294,7 @@ fn test_resolve_dispute_emits_status_change_with_actor() {
 
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1201,6 +1306,8 @@ fn test_resolve_dispute_emits_status_change_with_actor() {
         &None,
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     env.as_contract(&client.address, || {
         let mut escrow: crate::types::Escrow = env
@@ -1548,8 +1655,7 @@ fn test_multi_item_escrow_creation_and_release() {
 
     let total_amount: i128 = 100_000_000; // 10 XLM
 
-    // Mint tokens to the contract for funding
-    token_admin.mint(&client.address, &total_amount);
+    token_admin.mint(&buyer, &total_amount);
 
     // Create escrow with items
     let escrow_id = client.create_escrow(
@@ -1562,6 +1668,8 @@ fn test_multi_item_escrow_creation_and_release() {
         &Some(items.clone()),
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     // Verify escrow was created with items
     let escrow = client.get_escrow(&escrow_id).unwrap();
@@ -1584,7 +1692,7 @@ fn test_multi_item_escrow_creation_and_release() {
     assert!(!escrow.items.get(1).unwrap().released);
     assert!(!escrow.items.get(2).unwrap().released);
     assert_eq!(token.balance(&seller), 30_000_000);
-    assert_eq!(escrow.status, crate::types::EscrowStatus::Pending); // Still pending
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Funded); // Still funded
 
     // Release second item
     client.release_item(&escrow_id, &1u32);
@@ -1594,7 +1702,7 @@ fn test_multi_item_escrow_creation_and_release() {
     assert!(escrow.items.get(1).unwrap().released);
     assert!(!escrow.items.get(2).unwrap().released);
     assert_eq!(token.balance(&seller), 70_000_000);
-    assert_eq!(escrow.status, crate::types::EscrowStatus::Pending); // Still pending
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Funded); // Still funded
 
     // Release third item - this should complete the escrow
     client.release_item(&escrow_id, &2u32);
@@ -1633,7 +1741,7 @@ fn test_release_item_already_released_fails() {
         description: None,
     });
 
-    token_admin.mint(&client.address, &50_000_000);
+    token_admin.mint(&buyer, &50_000_000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1645,6 +1753,8 @@ fn test_release_item_already_released_fails() {
         &Some(items),
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     // Release item 0 first time
     client.release_item(&escrow_id, &0u32);
@@ -1675,7 +1785,7 @@ fn test_release_item_invalid_index_fails() {
         description: None,
     });
 
-    token_admin.mint(&client.address, &50_000_000);
+    token_admin.mint(&buyer, &50_000_000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -1687,6 +1797,8 @@ fn test_release_item_invalid_index_fails() {
         &Some(items),
         &None,
     );
+
+    client.fund_escrow(&escrow_id);
 
     // Try to release item with invalid index - should fail
     let result = client.try_release_item(&escrow_id, &5u32);
@@ -1782,8 +1894,7 @@ fn test_escrow_without_items_uses_full_release() {
     env.mock_all_auths();
     client.initialize(&admin, &admin, &0, &0, &0);
 
-    // Fund the contract so it can pay out
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     // Create escrow without items (old behavior)
     let escrow_id = client.create_escrow(
@@ -1797,6 +1908,8 @@ fn test_escrow_without_items_uses_full_release() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
+
     // Verify items is empty
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.items.len(), 0);
@@ -1808,6 +1921,33 @@ fn test_escrow_without_items_uses_full_release() {
     assert_eq!(token.balance(&seller), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+}
+
+#[test]
+fn trigger_time_lock_release_fails_if_pending_unfunded() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    let result = client.try_trigger_time_lock_release(&escrow_id);
+    assert_eq!(result, Err(Ok(ContractError::InvalidEscrowState)));
 }
 
 #[test]
@@ -2106,7 +2246,7 @@ fn test_fee_caps_min_fee() {
     // 5% fee, min 100, max 1000
     client.initialize(&admin, &collector, &500, &100, &1000);
 
-    token_admin.mint(&client.address, &1000);
+    token_admin.mint(&buyer, &1000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -2119,6 +2259,7 @@ fn test_fee_caps_min_fee() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
     // Normal fee = 1000 * 5% = 50. Min fee is 100.
@@ -2143,7 +2284,7 @@ fn test_fee_caps_max_fee() {
     // 5% fee, min 100, max 1000
     client.initialize(&admin, &collector, &500, &100, &1000);
 
-    token_admin.mint(&client.address, &50000);
+    token_admin.mint(&buyer, &50000);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -2156,6 +2297,7 @@ fn test_fee_caps_max_fee() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
     // Normal fee = 50000 * 5% = 2500. Max fee is 1000.
@@ -2258,7 +2400,8 @@ fn test_whitelisted_buyer_pays_no_fee() {
     // 5% fee, min 100, max 1000
     client.initialize(&admin, &collector, &500, &100, &1000);
 
-    token_admin.mint(&client.address, &10000);
+    token_admin.mint(&buyer, &10000);
+    client.add_fee_whitelist(&buyer);
 
     let escrow_id = client.create_escrow(
         &buyer,
@@ -2271,12 +2414,11 @@ fn test_whitelisted_buyer_pays_no_fee() {
         &None,
     );
 
+    client.fund_escrow(&escrow_id);
     client.release_escrow(&escrow_id);
 
-    // Normal fee = 10000 * 5% = 500. Within [100, 1000].
-    // Seller should get 10000 - 500 = 9500.
-    assert_eq!(token.balance(&seller), 9500);
-    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 500);
+    assert_eq!(token.balance(&seller), 10000);
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
 }
 
 #[test]
@@ -2403,9 +2545,9 @@ fn test_special_native_fee() {
 
     // 1. Check with non-native token (should be 5%)
     let other_token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &other_id.address());
-    other_token_admin.mint(&client.address, &10000);
-
     let buyer1 = Address::generate(&env);
+    other_token_admin.mint(&buyer1, &10000);
+
     let escrow_id_other = client.create_escrow(
         &buyer1,
         &seller,
@@ -2416,15 +2558,16 @@ fn test_special_native_fee() {
         &None,
         &None,
     );
+    client.fund_escrow(&escrow_id_other);
     client.release_escrow(&escrow_id_other);
     assert_eq!(client.get_pending_fee(&collector, &other_id.address()), 500);
 
     // 2. Check with native token (should be 1%)
     let native_token_admin =
         soroban_sdk::token::StellarAssetClient::new(&env, &native_id.address());
-    native_token_admin.mint(&client.address, &10000);
-
     let buyer2 = Address::generate(&env);
+    native_token_admin.mint(&buyer2, &10000);
+
     let escrow_id_native = client.create_escrow(
         &buyer2,
         &seller,
@@ -2435,6 +2578,7 @@ fn test_special_native_fee() {
         &None,
         &None,
     );
+    client.fund_escrow(&escrow_id_native);
     client.release_escrow(&escrow_id_native);
     assert_eq!(
         client.get_pending_fee(&collector, &native_id.address()),

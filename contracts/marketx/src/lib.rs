@@ -415,6 +415,14 @@ impl Contract {
         escrow.items.iter().any(|item| item.released)
     }
 
+    fn assert_escrow_funded(escrow: &Escrow) -> Result<(), ContractError> {
+        if escrow.status != EscrowStatus::Funded {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        Ok(())
+    }
+
     fn add_u32(env: &Env, key: DataKey) {
         let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + 1));
@@ -1023,9 +1031,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let tracking_id = escrow
             .tracking_id
@@ -1102,9 +1108,7 @@ impl Contract {
         // this escrow's outcome, and this call permanently fails (the escrow
         // can never return to Pending/Funded from a terminal or disputed
         // state, so this pending release can never execute).
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let from_status = escrow.status.clone();
         let actor = pending.oracle.clone();
@@ -1359,7 +1363,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        // 2. Validate escrow is in Pending state
+        // 2. Validate escrow is in a fundable state
         if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
             return Err(ContractError::InvalidEscrowState);
         }
@@ -1406,9 +1410,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         escrow.buyer.require_auth();
         let actor = escrow.buyer.clone();
@@ -1460,7 +1462,7 @@ impl Contract {
     ///
     /// # Errors
     /// * `EscrowNotFound` - If the escrow doesn't exist
-    /// * `InvalidEscrowState` - If the escrow is not in Pending state
+    /// * `InvalidEscrowState` - If the escrow is not in Funded state
     /// * `ItemNotFound` - If the item index is out of bounds
     /// * `ItemAlreadyReleased` - If the item has already been released
     pub fn release_item(env: Env, escrow_id: u64, item_index: u32) -> Result<(), ContractError> {
@@ -1473,9 +1475,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         escrow.buyer.require_auth();
 
@@ -1548,9 +1548,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if (escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded)
-            || Self::has_released_items(&escrow)
-        {
+        if Self::assert_escrow_funded(&escrow).is_err() || Self::has_released_items(&escrow) {
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1597,9 +1595,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if (escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded)
-            || Self::has_released_items(&escrow)
-        {
+        if Self::assert_escrow_funded(&escrow).is_err() || Self::has_released_items(&escrow) {
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1646,9 +1642,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         if amount <= 0 || amount > escrow.amount {
             return Err(ContractError::InvalidEscrowAmount);
@@ -3705,9 +3699,7 @@ impl Contract {
 
         escrow.buyer.require_auth();
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         if milestone_index >= escrow.milestones.len() {
             return Err(ContractError::MilestoneNotFound);
@@ -3802,9 +3794,7 @@ impl Contract {
         // Only buyer can set time lock in this version (restored for API compatibility)
         escrow.buyer.require_auth();
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let time_lock = TimeLock {
             release_ledger,
@@ -3843,9 +3833,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let time_lock = escrow
             .time_lock

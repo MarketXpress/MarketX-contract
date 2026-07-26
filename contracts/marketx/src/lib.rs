@@ -3529,78 +3529,62 @@ impl Contract {
     // 💰 BATCH FEE COLLECTION (#171)
     // =========================
 
-    /// Collect fees from multiple escrows in a single transaction.
-    /// This is more efficient than collecting fees one-by-one.
+    /// Drain accumulated fees for a collector across multiple tokens in one
+    /// transaction and transfer them to the collector.
+    ///
+    /// Fees are accrued into `PendingFee(collector, token)` storage at escrow
+    /// release time.  This function reads each entry, removes it, and performs
+    /// the real token transfer — mirroring `withdraw_fees` but over a list of
+    /// tokens so the collector can sweep everything in a single call.
+    ///
+    /// Tokens with a zero or missing balance are silently skipped (no transfer,
+    /// no error) so the caller does not have to filter the list beforehand.
     ///
     /// # Arguments
-    /// * `escrow_ids` - Vector of escrow IDs to collect fees from
+    /// * `collector` - Address that will receive the fees (must auth the call)
+    /// * `tokens`    - Token contract addresses to sweep
     ///
     /// # Returns
-    /// Total amount of fees collected
+    /// Total amount transferred across all tokens (sum in each token's own unit)
     ///
     /// # Errors
-    /// * `EscrowNotFound` - If any escrow doesn't exist
-    /// * `InvalidEscrowState` - If any escrow is not in Released state
+    /// Returns `ContractError::InvalidEscrowAmount` only if an individual token
+    /// transfer fails (e.g. the contract no longer holds the expected balance).
     pub fn batch_collect_fees(
         env: Env,
         collector: Address,
-        token: Address,
-        escrow_ids: Vec<u64>,
+        tokens: Vec<Address>,
     ) -> Result<i128, ContractError> {
         collector.require_auth();
 
         let mut total_fees: i128 = 0;
-        let mut count: u32 = 0;
+        let mut token_count: u32 = 0;
 
-        for escrow_id in escrow_ids.iter() {
-            let escrow: Escrow = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Escrow(escrow_id))
-                .ok_or(ContractError::EscrowNotFound)?;
+        for token in tokens.iter() {
+            let key = DataKey::PendingFee(collector.clone(), token.clone());
+            let amount: i128 = env.storage().persistent().get(&key).unwrap_or(0);
 
-            // Only collect from released escrows with matching token
-            if escrow.status == EscrowStatus::Released && escrow.token == token {
-                // Calculate fee for this escrow
-                let fee_bps: u32 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::FeeBps)
-                    .unwrap_or(0);
-
-                let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-                let min_fee: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::MinFee)
-                    .unwrap_or(0);
-                let max_fee: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::MaxFee)
-                    .unwrap_or(0);
-
-                if fee < min_fee {
-                    fee = min_fee;
-                }
-                if max_fee > 0 && fee > max_fee {
-                    fee = max_fee;
-                }
-                if fee > escrow.amount {
-                    fee = escrow.amount;
-                }
-
-                total_fees += fee;
-                count += 1;
+            if amount <= 0 {
+                // Nothing to collect for this token — skip silently.
+                continue;
             }
+
+            // Remove the entry before transferring to follow the
+            // checks-effects-interactions pattern and prevent double-spending.
+            env.storage().persistent().remove(&key);
+
+            let token_client = soroban_sdk::token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &collector, &amount);
+
+            total_fees += amount;
+            token_count += 1;
         }
 
         if total_fees > 0 {
             BatchFeesCollectedEvent {
                 collector: collector.clone(),
-                token: token.clone(),
                 total_amount: total_fees,
-                escrow_count: count,
+                token_count,
             }
             .publish(&env);
         }

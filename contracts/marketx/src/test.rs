@@ -3316,3 +3316,182 @@ fn test_mediation_no_agreement_does_not_settle() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
+
+// =========================================================================
+// batch_collect_fees tests (fix for issue #246)
+// =========================================================================
+
+/// batch_collect_fees should drain PendingFee across multiple tokens,
+/// transfer them to the collector, and clear the stored balances.
+///
+/// We accrue fees via real escrow releases (two different tokens) so that
+/// PendingFee entries are populated through the normal on-chain path rather
+/// than direct storage manipulation.
+#[test]
+fn test_batch_collect_fees_drains_pending_fee_and_transfers() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer_a = Address::generate(&env);
+    let buyer_b = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    // 5% fee, no caps
+    client.initialize(&admin, &collector, &500, &0, &0);
+
+    // --- Token A escrow ---
+    let asset_a = env.register_stellar_asset_contract_v2(admin.clone());
+    let asset_a_admin = soroban_sdk::token::StellarAssetClient::new(&env, &asset_a.address());
+    let token_a = soroban_sdk::token::Client::new(&env, &asset_a.address());
+    let amount_a: i128 = 1_000;
+    asset_a_admin.mint(&buyer_a, &amount_a);
+
+    let escrow_a = client.create_escrow(
+        &buyer_a, &seller, &asset_a.address(), &amount_a,
+        &None, &None, &None, &None,
+    );
+    client.fund_escrow(&escrow_a);
+    client.release_escrow(&escrow_a);
+    // fee = 1000 * 500 / 10000 = 50
+    let expected_fee_a: i128 = 50;
+
+    // --- Token B escrow ---
+    let asset_b = env.register_stellar_asset_contract_v2(admin.clone());
+    let asset_b_admin = soroban_sdk::token::StellarAssetClient::new(&env, &asset_b.address());
+    let token_b = soroban_sdk::token::Client::new(&env, &asset_b.address());
+    let amount_b: i128 = 2_000;
+    asset_b_admin.mint(&buyer_b, &amount_b);
+
+    let escrow_b = client.create_escrow(
+        &buyer_b, &seller, &asset_b.address(), &amount_b,
+        &None, &None, &None, &None,
+    );
+    client.fund_escrow(&escrow_b);
+    client.release_escrow(&escrow_b);
+    // fee = 2000 * 500 / 10000 = 100
+    let expected_fee_b: i128 = 100;
+
+    // Both PendingFee entries should be populated now.
+    assert_eq!(client.get_pending_fee(&collector, &asset_a.address()), expected_fee_a);
+    assert_eq!(client.get_pending_fee(&collector, &asset_b.address()), expected_fee_b);
+
+    // Collector holds nothing yet.
+    assert_eq!(token_a.balance(&collector), 0);
+    assert_eq!(token_b.balance(&collector), 0);
+
+    let mut tokens = Vec::new(&env);
+    tokens.push_back(asset_a.address());
+    tokens.push_back(asset_b.address());
+
+    let total = client.batch_collect_fees(&collector, &tokens);
+    assert_eq!(total, expected_fee_a + expected_fee_b);
+
+    // Tokens transferred to collector.
+    assert_eq!(token_a.balance(&collector), expected_fee_a);
+    assert_eq!(token_b.balance(&collector), expected_fee_b);
+
+    // PendingFee entries cleared.
+    assert_eq!(client.get_pending_fee(&collector, &asset_a.address()), 0);
+    assert_eq!(client.get_pending_fee(&collector, &asset_b.address()), 0);
+}
+
+/// batch_collect_fees with tokens that have no accumulated PendingFee must
+/// not transfer anything and must return 0.
+#[test]
+fn test_batch_collect_fees_no_transfer_when_no_pending_fees() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &500, &0, &0);
+
+    // Register a token but never release any escrow, so PendingFee stays empty.
+    let asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let token = soroban_sdk::token::Client::new(&env, &asset.address());
+
+    assert_eq!(client.get_pending_fee(&collector, &asset.address()), 0);
+    assert_eq!(token.balance(&collector), 0);
+
+    let mut tokens = Vec::new(&env);
+    tokens.push_back(asset.address());
+
+    let total = client.batch_collect_fees(&collector, &tokens);
+
+    // Nothing transferred.
+    assert_eq!(total, 0);
+    assert_eq!(token.balance(&collector), 0);
+    assert_eq!(client.get_pending_fee(&collector, &asset.address()), 0);
+}
+
+/// batch_collect_fees with an empty token vector returns 0 and is a no-op.
+#[test]
+fn test_batch_collect_fees_empty_token_list_is_noop() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &500, &0, &0);
+
+    let tokens: Vec<Address> = Vec::new(&env);
+    let total = client.batch_collect_fees(&collector, &tokens);
+    assert_eq!(total, 0);
+}
+
+/// batch_collect_fees must integrate correctly with the actual escrow release
+/// flow: release → PendingFee accrues → batch_collect_fees drains it.
+#[test]
+fn test_batch_collect_fees_after_real_escrow_release() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let asset = env.register_stellar_asset_contract_v2(admin.clone());
+    let asset_admin = soroban_sdk::token::StellarAssetClient::new(&env, &asset.address());
+    let token = soroban_sdk::token::Client::new(&env, &asset.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0); // 2.5%
+
+    let amount: i128 = 1_000;
+    asset_admin.mint(&buyer, &amount);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &asset.address(),
+        &amount,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+
+    // fee = 1000 * 250 / 10000 = 25
+    let expected_fee: i128 = 25;
+    assert_eq!(
+        client.get_pending_fee(&collector, &asset.address()),
+        expected_fee
+    );
+
+    // Collector holds nothing yet.
+    assert_eq!(token.balance(&collector), 0);
+
+    let mut tokens = Vec::new(&env);
+    tokens.push_back(asset.address());
+
+    let total = client.batch_collect_fees(&collector, &tokens);
+    assert_eq!(total, expected_fee);
+
+    // Tokens transferred to collector.
+    assert_eq!(token.balance(&collector), expected_fee);
+
+    // PendingFee cleared.
+    assert_eq!(client.get_pending_fee(&collector, &asset.address()), 0);
+}

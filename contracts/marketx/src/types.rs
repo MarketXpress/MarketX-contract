@@ -483,9 +483,8 @@ pub struct GroupBuyCompletedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BatchFeesCollectedEvent {
     pub collector: Address,
-    pub token: Address,
     pub total_amount: i128,
-    pub escrow_count: u32,
+    pub token_count: u32,
 }
 
 #[contracttype]

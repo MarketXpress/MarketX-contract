@@ -710,6 +710,9 @@ pub struct Escrow {
 /// Default mediation window length in ledgers (~48 hours at 5 s/ledger).
 pub const DEFAULT_MEDIATION_WINDOW_LEDGERS: u32 = 34_560;
 
+/// Maximum allowed mediation window length in ledgers (~30 days at 5 s/ledger) (#256).
+pub const MAX_MEDIATION_WINDOW_LEDGERS: u32 = 518_400;
+
 /// Mediation phase record for a disputed escrow (#205).
 ///
 /// When a dispute is raised, a mediation window opens before the arbiter can

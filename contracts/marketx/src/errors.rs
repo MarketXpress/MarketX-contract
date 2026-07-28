@@ -90,4 +90,6 @@ pub enum ContractError {
     OracleChallengeWindowOpen = 177,
     /// Arbiter address matches the escrow's buyer or seller (#243).
     ArbiterConflictOfInterest = 178,
+    /// Mediation window_ledgers exceeds MAX_MEDIATION_WINDOW_LEDGERS (#256).
+    InvalidMediationWindow = 179,
 }

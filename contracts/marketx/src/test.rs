@@ -3460,3 +3460,54 @@ fn test_mediation_no_agreement_does_not_settle() {
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Disputed);
 }
+
+#[test]
+fn test_open_mediation_rejects_excessive_window_ledgers() {
+    let (env, client) = setup();
+    let (_admin, buyer, _seller, _arbiter, escrow_id) = setup_disputed_escrow(&env, &client);
+
+    env.mock_all_auths();
+
+    // Excessive window_ledgers > MAX_MEDIATION_WINDOW_LEDGERS (518_400) should be rejected
+    let result = client.try_open_mediation(&buyer, &escrow_id, &518_401);
+    assert_eq!(result, Err(Ok(ContractError::InvalidMediationWindow)));
+
+    // Exact max value should succeed
+    assert!(client
+        .try_open_mediation(&buyer, &escrow_id, &518_400)
+        .is_ok());
+}
+
+#[test]
+fn test_admin_can_cancel_mediation_and_force_resolve() {
+    let (env, client) = setup();
+    let (admin, buyer, _seller, _arbiter, escrow_id) = setup_disputed_escrow(&env, &client);
+
+    env.mock_all_auths();
+
+    // Open mediation with max window
+    client.open_mediation(
+        &buyer,
+        &escrow_id,
+        &crate::types::MAX_MEDIATION_WINDOW_LEDGERS,
+    );
+
+    let phase = client.get_mediation_phase(&escrow_id).unwrap();
+    assert!(!phase.concluded);
+
+    // Arbiter resolution is blocked while mediation is open
+    let res = client.try_resolve_dispute(&escrow_id, &0);
+    assert_eq!(res, Err(Ok(ContractError::MediationPhaseOpen)));
+
+    // Admin cancels mediation
+    client.cancel_mediation(&admin, &escrow_id);
+
+    let phase = client.get_mediation_phase(&escrow_id).unwrap();
+    assert!(phase.concluded);
+
+    // Arbiter can now resolve immediately even though expires_at has not passed
+    client.resolve_dispute(&escrow_id, &0);
+
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+}

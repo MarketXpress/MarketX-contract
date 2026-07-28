@@ -119,7 +119,7 @@ pub use types::{
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
     DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
-    MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
+    MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_MEDIATION_WINDOW_LEDGERS, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
     UNFUNDED_EXPIRY_LEDGERS,
 };
 
@@ -1317,6 +1317,10 @@ impl Contract {
             }
         }
 
+        if window_ledgers > MAX_MEDIATION_WINDOW_LEDGERS {
+            return Err(ContractError::InvalidMediationWindow);
+        }
+
         let ledgers = if window_ledgers == 0 {
             DEFAULT_MEDIATION_WINDOW_LEDGERS
         } else {
@@ -1342,6 +1346,33 @@ impl Contract {
             expires_at: now + ledgers,
         }
         .publish(&env);
+
+        Ok(())
+    }
+
+    /// Admin escape hatch to cancel/conclude an open mediation phase (#256).
+    pub fn cancel_mediation(env: Env, admin: Address, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        admin.require_auth();
+        let current_admin = Self::assert_admin(&env)?;
+        if current_admin != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut phase: MediationPhase = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MediationPhase(escrow_id))
+            .ok_or(ContractError::NoMediationPhase)?;
+
+        if phase.concluded {
+            return Err(ContractError::MediationAlreadyConcluded);
+        }
+
+        phase.concluded = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::MediationPhase(escrow_id), &phase);
 
         Ok(())
     }

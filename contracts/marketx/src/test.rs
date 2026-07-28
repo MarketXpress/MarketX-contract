@@ -3473,7 +3473,9 @@ fn test_open_mediation_rejects_excessive_window_ledgers() {
     assert_eq!(result, Err(Ok(ContractError::InvalidMediationWindow)));
 
     // Exact max value should succeed
-    assert!(client.try_open_mediation(&buyer, &escrow_id, &518_400).is_ok());
+    assert!(client
+        .try_open_mediation(&buyer, &escrow_id, &518_400)
+        .is_ok());
 }
 
 #[test]
@@ -3484,7 +3486,11 @@ fn test_admin_can_cancel_mediation_and_force_resolve() {
     env.mock_all_auths();
 
     // Open mediation with max window
-    client.open_mediation(&buyer, &escrow_id, &crate::types::MAX_MEDIATION_WINDOW_LEDGERS);
+    client.open_mediation(
+        &buyer,
+        &escrow_id,
+        &crate::types::MAX_MEDIATION_WINDOW_LEDGERS,
+    );
 
     let phase = client.get_mediation_phase(&escrow_id).unwrap();
     assert!(!phase.concluded);

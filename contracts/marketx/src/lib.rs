@@ -112,15 +112,16 @@ pub use types::{
     FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
     GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
     MediationOpenedEvent, MediationPhase, MediationProposedEvent, MediationSettledEvent,
-    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease,
+    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease, PendingUpgrade,
     RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
     StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
-    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
+    TokenCircuitBreakerEvent, UpgradeCancelledEvent, UpgradeExecutedEvent, UpgradeProposedEvent,
+    APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
     DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
     MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_MEDIATION_WINDOW_LEDGERS, MAX_METADATA_SIZE,
-    MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
+    MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS, UPGRADE_TIMELOCK_LEDGERS,
 };
 
 #[cfg(test)]
@@ -3149,10 +3150,96 @@ impl Contract {
     // 🔧 ADMIN FUNCTIONS
     // =========================
 
-    /// Upgrade the contract WASM.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+    /// Propose a contract WASM upgrade, starting the timelock (#242).
+    ///
+    /// The upgrade cannot take effect until `UPGRADE_TIMELOCK_LEDGERS` have
+    /// elapsed, giving escrow participants a window to observe the pending
+    /// change and exit. Proposing again replaces any existing proposal and
+    /// restarts the delay.
+    pub fn propose_upgrade(
+        env: Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        let now = env.ledger().sequence();
+        let pending = PendingUpgrade {
+            wasm_hash: new_wasm_hash.clone(),
+            proposed_at: now,
+            ready_at: now + UPGRADE_TIMELOCK_LEDGERS,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingUpgrade, &pending);
+
+        UpgradeProposedEvent {
+            wasm_hash: new_wasm_hash,
+            proposed_at: pending.proposed_at,
+            ready_at: pending.ready_at,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Cancel a proposed upgrade before it executes (#242).
+    ///
+    /// This is the escape hatch for a proposal made in error, or one observed
+    /// during the timelock window and judged malicious.
+    pub fn cancel_upgrade(env: Env) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        let pending: PendingUpgrade = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(ContractError::NoPendingUpgrade)?;
+
+        env.storage().persistent().remove(&DataKey::PendingUpgrade);
+
+        UpgradeCancelledEvent {
+            wasm_hash: pending.wasm_hash,
+            cancelled_at: env.ledger().sequence(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Read the currently proposed upgrade, if any (#242).
+    ///
+    /// Public and unauthenticated on purpose: the timelock only protects escrow
+    /// participants if they can observe a pending WASM swap before it lands.
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        env.storage().persistent().get(&DataKey::PendingUpgrade)
+    }
+
+    /// Execute a previously proposed upgrade once its timelock has elapsed (#242).
+    pub fn execute_upgrade(env: Env) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        let pending: PendingUpgrade = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(ContractError::NoPendingUpgrade)?;
+
+        let now = env.ledger().sequence();
+        if now < pending.ready_at {
+            return Err(ContractError::UpgradeTimelockNotElapsed);
+        }
+
+        env.storage().persistent().remove(&DataKey::PendingUpgrade);
+        env.deployer()
+            .update_current_contract_wasm(pending.wasm_hash.clone());
+
+        UpgradeExecutedEvent {
+            wasm_hash: pending.wasm_hash,
+            executed_at: now,
+        }
+        .publish(&env);
+
         Ok(())
     }
 

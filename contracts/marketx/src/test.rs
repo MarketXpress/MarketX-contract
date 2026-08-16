@@ -2056,12 +2056,12 @@ fn test_upgrade_auth_failure() {
             address: &non_admin,
             invoke: &MockAuthInvoke {
                 contract: &client.address,
-                fn_name: "upgrade",
+                fn_name: "propose_upgrade",
                 args: (&new_wasm_hash,).into_val(&env),
                 sub_invokes: &[],
             },
         }])
-        .try_upgrade(&new_wasm_hash);
+        .try_propose_upgrade(&new_wasm_hash);
 
     assert!(result.is_err());
 }
@@ -2096,7 +2096,7 @@ fn test_upgrade_state_persistence() {
     assert_eq!(escrow.amount, 1000);
 
     let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[0; 32]);
-    let _ = client.try_upgrade(&new_wasm_hash);
+    let _ = client.try_propose_upgrade(&new_wasm_hash);
 
     let escrow_after = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow_after.amount, 1000);
@@ -3510,4 +3510,161 @@ fn test_admin_can_cancel_mediation_and_force_resolve() {
 
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+}
+
+// ── Upgrade timelock (#242) ──────────────────────────────────────────────────
+
+#[test]
+fn execute_upgrade_fails_before_timelock_elapses() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[7; 32]);
+    client.propose_upgrade(&new_wasm_hash);
+
+    // One ledger short of the required delay.
+    env.ledger()
+        .with_mut(|l| l.sequence_number += crate::UPGRADE_TIMELOCK_LEDGERS - 1);
+
+    let result = client.try_execute_upgrade();
+    assert_eq!(result, Err(Ok(ContractError::UpgradeTimelockNotElapsed)));
+}
+
+#[test]
+fn proposed_upgrade_is_publicly_visible_with_its_ready_ledger() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    assert_eq!(client.get_pending_upgrade(), None);
+
+    let proposed_at = env.ledger().sequence();
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[7; 32]);
+    client.propose_upgrade(&new_wasm_hash);
+
+    let pending = client.get_pending_upgrade().unwrap();
+    assert_eq!(pending.wasm_hash, new_wasm_hash);
+    assert_eq!(pending.proposed_at, proposed_at);
+    assert_eq!(
+        pending.ready_at,
+        proposed_at + crate::UPGRADE_TIMELOCK_LEDGERS
+    );
+}
+
+#[test]
+fn cancel_upgrade_clears_the_pending_proposal() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[7; 32]);
+    client.propose_upgrade(&new_wasm_hash);
+    assert!(client.get_pending_upgrade().is_some());
+
+    client.cancel_upgrade();
+
+    assert_eq!(client.get_pending_upgrade(), None);
+
+    // Even once the original delay has passed, there is nothing to execute.
+    env.ledger()
+        .with_mut(|l| l.sequence_number += crate::UPGRADE_TIMELOCK_LEDGERS + 1);
+    assert_eq!(
+        client.try_execute_upgrade(),
+        Err(Ok(ContractError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn reproposing_an_upgrade_restarts_the_timelock() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let first_hash = soroban_sdk::BytesN::from_array(&env, &[1; 32]);
+    client.propose_upgrade(&first_hash);
+
+    // Wait until the first proposal is almost executable, then swap the target.
+    env.ledger()
+        .with_mut(|l| l.sequence_number += crate::UPGRADE_TIMELOCK_LEDGERS - 1);
+
+    let second_hash = soroban_sdk::BytesN::from_array(&env, &[2; 32]);
+    client.propose_upgrade(&second_hash);
+
+    let pending = client.get_pending_upgrade().unwrap();
+    assert_eq!(pending.wasm_hash, second_hash);
+
+    // The new hash must serve a full delay of its own, not inherit the old one.
+    assert_eq!(
+        client.try_execute_upgrade(),
+        Err(Ok(ContractError::UpgradeTimelockNotElapsed))
+    );
+}
+
+#[test]
+fn execute_upgrade_fails_when_nothing_was_proposed() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    assert_eq!(
+        client.try_execute_upgrade(),
+        Err(Ok(ContractError::NoPendingUpgrade))
+    );
+}
+
+#[test]
+fn non_admin_cannot_execute_or_cancel_an_upgrade() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let new_wasm_hash = soroban_sdk::BytesN::from_array(&env, &[7; 32]);
+    client.propose_upgrade(&new_wasm_hash);
+
+    env.ledger()
+        .with_mut(|l| l.sequence_number += crate::UPGRADE_TIMELOCK_LEDGERS + 1);
+
+    let execute_result = client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "execute_upgrade",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_execute_upgrade();
+    assert!(execute_result.is_err());
+
+    let cancel_result = client
+        .mock_auths(&[MockAuth {
+            address: &non_admin,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "cancel_upgrade",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_cancel_upgrade();
+    assert!(cancel_result.is_err());
+
+    // The proposal survives both failed attempts.
+    assert!(client.get_pending_upgrade().is_some());
 }

@@ -92,4 +92,8 @@ pub enum ContractError {
     ArbiterConflictOfInterest = 178,
     /// Mediation window_ledgers exceeds MAX_MEDIATION_WINDOW_LEDGERS (#256).
     InvalidMediationWindow = 179,
+    /// No upgrade has been proposed, so there is nothing to execute or cancel (#242).
+    NoPendingUpgrade = 180,
+    /// The upgrade timelock has not yet elapsed (#242).
+    UpgradeTimelockNotElapsed = 181,
 }

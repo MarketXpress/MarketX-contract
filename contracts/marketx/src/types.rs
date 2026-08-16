@@ -124,6 +124,8 @@ pub enum DataKey {
     DisputeVoting(u64),
     /// Pending oracle-triggered release awaiting its challenge window (#244).
     PendingOracleRelease(u64),
+    /// Contract upgrade proposed but not yet executed (#242).
+    PendingUpgrade,
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -870,4 +872,51 @@ pub struct DisputeConsensusReachedEvent {
     pub resolution: u32, // 0 = release to seller, 1 = refund to buyer
     pub votes_for_release: u32,
     pub votes_for_refund: u32,
+}
+
+// ─── Issue #242: Timelocked contract upgrades ────────────────────────────────
+
+/// Delay enforced between proposing and executing a contract upgrade
+/// (~48 hours at 5 s/ledger).
+///
+/// The window exists so that escrow participants can observe a pending WASM
+/// swap and exit before it takes effect. A compromised admin key therefore
+/// cannot replace the contract instantly.
+pub const UPGRADE_TIMELOCK_LEDGERS: u32 = 34_560;
+
+/// A contract upgrade that has been proposed but not yet executed (#242).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingUpgrade {
+    /// Hash of the WASM that will replace the current contract.
+    pub wasm_hash: BytesN<32>,
+    /// Ledger at which the upgrade was proposed.
+    pub proposed_at: u32,
+    /// Ledger at or after which the upgrade may be executed.
+    pub ready_at: u32,
+}
+
+#[contractevent(topics = ["upgrade_proposed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeProposedEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+    pub proposed_at: u32,
+    pub ready_at: u32,
+}
+
+#[contractevent(topics = ["upgrade_cancelled"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeCancelledEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+    pub cancelled_at: u32,
+}
+
+#[contractevent(topics = ["upgrade_executed"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeExecutedEvent {
+    #[topic]
+    pub wasm_hash: BytesN<32>,
+    pub executed_at: u32,
 }

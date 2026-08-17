@@ -9,7 +9,7 @@ members = [
 # `{ workspace = true }` to keep versions consistent across all crates.
 # ---------------------------------------------------------------------------
 [workspace.dependencies]
-soroban-sdk = "25"
+soroban-sdk = "27"
 
 [profile.release]
 opt-level = "z"

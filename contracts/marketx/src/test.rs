@@ -2384,6 +2384,251 @@ fn test_non_whitelisted_buyer_pays_fee() {
     assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
 }
 
+// =========================
+// BATCH FEE COLLECTION TESTS (#259)
+// =========================
+
+/// Create, fund, and release an escrow of `amount`, returning its ID.
+/// Leaves the escrow's fee credited to `collector`'s pending balance,
+/// exactly as `batch_collect_fees` expects to find it. `tag` disambiguates
+/// escrows sharing the same buyer/seller pair so duplicate-escrow detection
+/// (keyed on buyer + seller + metadata) doesn't collide them.
+fn create_funded_and_released_escrow<'a>(
+    env: &Env,
+    client: &ContractClient<'a>,
+    buyer: &Address,
+    seller: &Address,
+    token_admin: &soroban_sdk::token::StellarAssetClient,
+    token: &Address,
+    amount: i128,
+    tag: &[u8],
+) -> u64 {
+    token_admin.mint(buyer, &amount);
+    let metadata = Some(Bytes::from_slice(env, tag));
+    let escrow_id = client.create_escrow(
+        buyer, seller, token, &amount, &metadata, &None, &None, &None,
+    );
+    client.fund_escrow(&escrow_id);
+    client.release_escrow(&escrow_id);
+    escrow_id
+}
+
+#[test]
+fn test_batch_collect_fees_transfers_funds() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0); // 2.5% fee
+
+    let escrow_a = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_admin,
+        &token_id.address(),
+        1000,
+        b"escrow-a",
+    );
+    let escrow_b = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_admin,
+        &token_id.address(),
+        2000,
+        b"escrow-b",
+    );
+
+    // Fees: 1000 * 2.5% = 25, 2000 * 2.5% = 50. Total = 75.
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 75);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(escrow_a);
+    ids.push_back(escrow_b);
+
+    let collected = client.batch_collect_fees(&collector, &token_id.address(), &ids);
+
+    assert_eq!(collected, 75);
+    // Balances actually moved by exactly the reported total.
+    assert_eq!(token.balance(&collector), 75);
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
+}
+
+#[test]
+fn test_batch_collect_fees_rejects_double_collection() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let escrow_id = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_admin,
+        &token_id.address(),
+        1000,
+        b"escrow",
+    );
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(escrow_id);
+
+    let first = client.batch_collect_fees(&collector, &token_id.address(), &ids);
+    assert_eq!(first, 25);
+    assert_eq!(token.balance(&collector), 25);
+
+    // Collecting the same escrow again yields nothing — no double payout.
+    let second = client.batch_collect_fees(&collector, &token_id.address(), &ids);
+    assert_eq!(second, 0);
+    assert_eq!(token.balance(&collector), 25);
+}
+
+#[test]
+fn test_batch_collect_fees_rejects_over_limit() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let collector = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let mut ids = Vec::new(&env);
+    for i in 0..(crate::MAX_ESCROWS_PER_BATCH + 1) {
+        ids.push_back(i as u64);
+    }
+
+    let result = client.try_batch_collect_fees(&collector, &token_id.address(), &ids);
+    assert_eq!(result, Err(Ok(ContractError::TooManyItems)));
+}
+
+#[test]
+fn test_batch_collect_fees_mixed_eligible_and_ineligible() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    // Eligible: released.
+    let released_id = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_admin,
+        &token_id.address(),
+        1000,
+        b"released",
+    );
+
+    // Ineligible: funded but not yet released.
+    token_admin.mint(&buyer, &1000);
+    let funded_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.fund_escrow(&funded_id);
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(released_id);
+    ids.push_back(funded_id);
+
+    let collected = client.batch_collect_fees(&collector, &token_id.address(), &ids);
+
+    // Only the released escrow's fee (1000 * 2.5% = 25) is collected.
+    assert_eq!(collected, 25);
+    assert_eq!(token.balance(&collector), 25);
+
+    // The still-funded escrow's fee remains untouched.
+    assert_eq!(client.get_pending_fee(&collector, &token_id.address()), 0);
+}
+
+#[test]
+fn test_batch_collect_fees_skips_wrong_token() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let collector = Address::generate(&env);
+
+    let token_a = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_a_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_a.address());
+    let token_a_client = soroban_sdk::token::Client::new(&env, &token_a.address());
+
+    let token_b = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_b_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_b.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &collector, &250, &0, &0);
+
+    let escrow_a = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_a_admin,
+        &token_a.address(),
+        1000,
+        b"token-a",
+    );
+    let escrow_b = create_funded_and_released_escrow(
+        &env,
+        &client,
+        &buyer,
+        &seller,
+        &token_b_admin,
+        &token_b.address(),
+        1000,
+        b"token-b",
+    );
+
+    let mut ids = Vec::new(&env);
+    ids.push_back(escrow_a);
+    ids.push_back(escrow_b);
+
+    // Collecting against token_a should skip the token_b escrow entirely.
+    let collected = client.batch_collect_fees(&collector, &token_a.address(), &ids);
+
+    assert_eq!(collected, 25);
+    assert_eq!(token_a_client.balance(&collector), 25);
+    // token_b's fee is untouched — still sitting in its own pending balance.
+    assert_eq!(client.get_pending_fee(&collector, &token_b.address()), 25);
+}
+
 #[test]
 fn test_special_native_fee() {
     let (env, client) = setup();

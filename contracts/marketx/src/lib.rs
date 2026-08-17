@@ -119,8 +119,8 @@ pub use types::{
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
     DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
-    MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE,
-    UNFUNDED_EXPIRY_LEDGERS,
+    MAX_ESCROWS_PER_BATCH, MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
+    MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
 };
 
 #[cfg(test)]
@@ -3520,15 +3520,22 @@ impl Contract {
     /// Collect fees from multiple escrows in a single transaction.
     /// This is more efficient than collecting fees one-by-one.
     ///
+    /// Each escrow's fee was already credited into `PendingFee(collector, token)`
+    /// when it released (see `withdraw_fees`'s pull-pattern bookkeeping). This
+    /// function transfers that real, already-accrued balance to `collector` in
+    /// one batch, itemized against the requested `escrow_ids`, rather than
+    /// fabricating a new amount from scratch. Each escrow is flagged once
+    /// collected so the same fee can never be paid out twice.
+    ///
     /// # Arguments
-    /// * `escrow_ids` - Vector of escrow IDs to collect fees from
+    /// * `escrow_ids` - Vector of escrow IDs to collect fees from (max `MAX_ESCROWS_PER_BATCH`)
     ///
     /// # Returns
-    /// Total amount of fees collected
+    /// Total amount of fees actually transferred to `collector`.
     ///
     /// # Errors
     /// * `EscrowNotFound` - If any escrow doesn't exist
-    /// * `InvalidEscrowState` - If any escrow is not in Released state
+    /// * `TooManyItems` - If `escrow_ids` exceeds `MAX_ESCROWS_PER_BATCH`
     pub fn batch_collect_fees(
         env: Env,
         collector: Address,
@@ -3537,8 +3544,16 @@ impl Contract {
     ) -> Result<i128, ContractError> {
         collector.require_auth();
 
+        if escrow_ids.len() > MAX_ESCROWS_PER_BATCH {
+            return Err(ContractError::TooManyItems);
+        }
+
+        let pending_key = DataKey::PendingFee(collector.clone(), token.clone());
+        let mut pending_balance: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+
         let mut total_fees: i128 = 0;
         let mut count: u32 = 0;
+        let mut collected_ids: Vec<u64> = Vec::new(&env);
 
         for escrow_id in escrow_ids.iter() {
             let escrow: Escrow = env
@@ -3547,43 +3562,52 @@ impl Contract {
                 .get(&DataKey::Escrow(escrow_id))
                 .ok_or(ContractError::EscrowNotFound)?;
 
-            // Only collect from released escrows with matching token
-            if escrow.status == EscrowStatus::Released && escrow.token == token {
-                // Calculate fee for this escrow
-                let fee_bps: u32 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::FeeBps)
-                    .unwrap_or(0);
-
-                let mut fee: i128 = escrow.amount * (fee_bps as i128) / 10_000;
-                let min_fee: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::MinFee)
-                    .unwrap_or(0);
-                let max_fee: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::MaxFee)
-                    .unwrap_or(0);
-
-                if fee < min_fee {
-                    fee = min_fee;
-                }
-                if max_fee > 0 && fee > max_fee {
-                    fee = max_fee;
-                }
-                if fee > escrow.amount {
-                    fee = escrow.amount;
-                }
-
-                total_fees += fee;
-                count += 1;
+            // Only collect from released escrows with a matching token that
+            // haven't already had their fee collected via this path.
+            if escrow.status != EscrowStatus::Released || escrow.token != token {
+                continue;
             }
+
+            let collected_key = DataKey::EscrowFeeCollected(escrow_id);
+            if env
+                .storage()
+                .persistent()
+                .get(&collected_key)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let fee =
+                Self::calculate_fee_internal(&env, escrow.amount, &escrow.token, &escrow.buyer);
+
+            // The pending-fee ledger for this collector/token pair must
+            // actually hold this fee (it was credited there at release
+            // time). If it doesn't — e.g. fee config changed afterwards —
+            // skip rather than overdraw funds that aren't really there.
+            if fee <= 0 || fee > pending_balance {
+                continue;
+            }
+
+            pending_balance -= fee;
+            total_fees += fee;
+            count += 1;
+            collected_ids.push_back(escrow_id);
         }
 
         if total_fees > 0 {
+            env.storage()
+                .persistent()
+                .set(&pending_key, &pending_balance);
+            for id in collected_ids.iter() {
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::EscrowFeeCollected(id), &true);
+            }
+
+            let token_client = soroban_sdk::token::Client::new(&env, &token);
+            token_client.transfer(&env.current_contract_address(), &collector, &total_fees);
+
             BatchFeesCollectedEvent {
                 collector: collector.clone(),
                 token: token.clone(),

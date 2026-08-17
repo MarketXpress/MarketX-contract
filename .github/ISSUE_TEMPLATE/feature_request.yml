@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement or new capability for MarketX.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or opportunity
+      description: What user need, contract limitation, or ecosystem gap should this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the change you want to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any workaround or alternative design you considered.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How should maintainers know this feature is complete?
+      placeholder: |
+        - [ ] ...
+        - [ ] ...

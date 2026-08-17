@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible problem in the MarketX contract, SDK, docs, or tooling.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve MarketX. Do not report security vulnerabilities here; use the private process in `.github/SECURITY.md`.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and its impact.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest reproducible example, command sequence, or test case.
+      placeholder: |
+        1. Run ...
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version, commit, or branch
+      placeholder: main, vX.Y.Z, or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste relevant logs, test output, or screenshots.
+      render: shell

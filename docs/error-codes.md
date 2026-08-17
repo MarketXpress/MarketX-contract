@@ -167,6 +167,14 @@ Size limits enforced by error 60:
 
 ---
 
+## Dispute Resolution — Arbiter Conflict of Interest (178)
+
+| Code | Variant | Message | Recovery hint |
+|------|---------|---------|---------------|
+| 178 | `ArbiterConflictOfInterest` | The arbiter address matches the escrow's buyer or seller. | Choose an arbiter that is not a party to the escrow. |
+
+---
+
 ## Updating this document
 
 When adding a new `ContractError` variant:

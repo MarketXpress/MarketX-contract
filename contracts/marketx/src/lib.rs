@@ -112,15 +112,17 @@ pub use types::{
     FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
     GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
     MediationOpenedEvent, MediationPhase, MediationProposedEvent, MediationSettledEvent,
-    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease,
+    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease, PendingUpgrade,
     RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
     StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
-    TokenCircuitBreakerEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
+    TokenCircuitBreakerEvent, UpgradeCancelledEvent, UpgradeExecutedEvent, UpgradeProposedEvent,
+    APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
     DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
-    MAX_ESCROWS_PER_BATCH, MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW, MAX_METADATA_SIZE,
-    MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
+    MAX_ESCROWS_PER_BATCH, MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW,
+    MAX_MEDIATION_WINDOW_LEDGERS, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
+    UPGRADE_TIMELOCK_LEDGERS,
 };
 
 #[cfg(test)]
@@ -415,6 +417,14 @@ impl Contract {
         escrow.items.iter().any(|item| item.released)
     }
 
+    fn assert_escrow_funded(escrow: &Escrow) -> Result<(), ContractError> {
+        if escrow.status != EscrowStatus::Funded {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
+        Ok(())
+    }
+
     fn add_u32(env: &Env, key: DataKey) {
         let current: u32 = env.storage().persistent().get(&key).unwrap_or(0);
         env.storage().persistent().set(&key, &(current + 1));
@@ -561,6 +571,9 @@ impl Contract {
         Self::check_zero_address(&env, &token)?;
         if let Some(ref a) = arbiter {
             Self::check_zero_address(&env, a)?;
+            if *a == buyer || *a == seller {
+                return Err(ContractError::ArbiterConflictOfInterest);
+            }
         }
 
         Self::assert_token_not_paused(&env, &token)?;
@@ -1020,9 +1033,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let tracking_id = escrow
             .tracking_id
@@ -1099,9 +1110,7 @@ impl Contract {
         // this escrow's outcome, and this call permanently fails (the escrow
         // can never return to Pending/Funded from a terminal or disputed
         // state, so this pending release can never execute).
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let from_status = escrow.status.clone();
         let actor = pending.oracle.clone();
@@ -1310,6 +1319,10 @@ impl Contract {
             }
         }
 
+        if window_ledgers > MAX_MEDIATION_WINDOW_LEDGERS {
+            return Err(ContractError::InvalidMediationWindow);
+        }
+
         let ledgers = if window_ledgers == 0 {
             DEFAULT_MEDIATION_WINDOW_LEDGERS
         } else {
@@ -1339,6 +1352,33 @@ impl Contract {
         Ok(())
     }
 
+    /// Admin escape hatch to cancel/conclude an open mediation phase (#256).
+    pub fn cancel_mediation(env: Env, admin: Address, escrow_id: u64) -> Result<(), ContractError> {
+        Self::assert_not_paused(&env)?;
+        admin.require_auth();
+        let current_admin = Self::assert_admin(&env)?;
+        if current_admin != admin {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let mut phase: MediationPhase = env
+            .storage()
+            .persistent()
+            .get(&DataKey::MediationPhase(escrow_id))
+            .ok_or(ContractError::NoMediationPhase)?;
+
+        if phase.concluded {
+            return Err(ContractError::MediationAlreadyConcluded);
+        }
+
+        phase.concluded = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::MediationPhase(escrow_id), &phase);
+
+        Ok(())
+    }
+
     pub fn get_total_refunded_amount(env: Env) -> i128 {
         env.storage()
             .persistent()
@@ -1356,7 +1396,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        // 2. Validate escrow is in Pending state
+        // 2. Validate escrow is in a fundable state
         if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
             return Err(ContractError::InvalidEscrowState);
         }
@@ -1403,9 +1443,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         escrow.buyer.require_auth();
         let actor = escrow.buyer.clone();
@@ -1457,7 +1495,7 @@ impl Contract {
     ///
     /// # Errors
     /// * `EscrowNotFound` - If the escrow doesn't exist
-    /// * `InvalidEscrowState` - If the escrow is not in Pending state
+    /// * `InvalidEscrowState` - If the escrow is not in Funded state
     /// * `ItemNotFound` - If the item index is out of bounds
     /// * `ItemAlreadyReleased` - If the item has already been released
     pub fn release_item(env: Env, escrow_id: u64, item_index: u32) -> Result<(), ContractError> {
@@ -1470,9 +1508,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         escrow.buyer.require_auth();
 
@@ -1545,9 +1581,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if (escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded)
-            || Self::has_released_items(&escrow)
-        {
+        if Self::assert_escrow_funded(&escrow).is_err() || Self::has_released_items(&escrow) {
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1594,9 +1628,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if (escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded)
-            || Self::has_released_items(&escrow)
-        {
+        if Self::assert_escrow_funded(&escrow).is_err() || Self::has_released_items(&escrow) {
             return Err(ContractError::InvalidEscrowState);
         }
 
@@ -1643,9 +1675,7 @@ impl Contract {
             return Err(ContractError::Unauthorized);
         }
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         if amount <= 0 || amount > escrow.amount {
             return Err(ContractError::InvalidEscrowAmount);
@@ -2641,6 +2671,15 @@ impl Contract {
             return Err(ContractError::ArbiterStakeInsufficient);
         }
 
+        // Reject any arbiter that is a party to the escrow — an arbiter who
+        // is also the buyer or seller could rule in their own favor with no
+        // independent check (#243).
+        for arbiter in arbiters.iter() {
+            if arbiter == escrow.buyer || arbiter == escrow.seller {
+                return Err(ContractError::ArbiterConflictOfInterest);
+            }
+        }
+
         let max_arbiters = env
             .storage()
             .persistent()
@@ -3112,10 +3151,96 @@ impl Contract {
     // 🔧 ADMIN FUNCTIONS
     // =========================
 
-    /// Upgrade the contract WASM.
-    pub fn upgrade(env: Env, new_wasm_hash: soroban_sdk::BytesN<32>) -> Result<(), ContractError> {
+    /// Propose a contract WASM upgrade, starting the timelock (#242).
+    ///
+    /// The upgrade cannot take effect until `UPGRADE_TIMELOCK_LEDGERS` have
+    /// elapsed, giving escrow participants a window to observe the pending
+    /// change and exit. Proposing again replaces any existing proposal and
+    /// restarts the delay.
+    pub fn propose_upgrade(
+        env: Env,
+        new_wasm_hash: soroban_sdk::BytesN<32>,
+    ) -> Result<(), ContractError> {
         Self::assert_admin(&env)?;
-        env.deployer().update_current_contract_wasm(new_wasm_hash);
+
+        let now = env.ledger().sequence();
+        let pending = PendingUpgrade {
+            wasm_hash: new_wasm_hash.clone(),
+            proposed_at: now,
+            ready_at: now + UPGRADE_TIMELOCK_LEDGERS,
+        };
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PendingUpgrade, &pending);
+
+        UpgradeProposedEvent {
+            wasm_hash: new_wasm_hash,
+            proposed_at: pending.proposed_at,
+            ready_at: pending.ready_at,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Cancel a proposed upgrade before it executes (#242).
+    ///
+    /// This is the escape hatch for a proposal made in error, or one observed
+    /// during the timelock window and judged malicious.
+    pub fn cancel_upgrade(env: Env) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        let pending: PendingUpgrade = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(ContractError::NoPendingUpgrade)?;
+
+        env.storage().persistent().remove(&DataKey::PendingUpgrade);
+
+        UpgradeCancelledEvent {
+            wasm_hash: pending.wasm_hash,
+            cancelled_at: env.ledger().sequence(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Read the currently proposed upgrade, if any (#242).
+    ///
+    /// Public and unauthenticated on purpose: the timelock only protects escrow
+    /// participants if they can observe a pending WASM swap before it lands.
+    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+        env.storage().persistent().get(&DataKey::PendingUpgrade)
+    }
+
+    /// Execute a previously proposed upgrade once its timelock has elapsed (#242).
+    pub fn execute_upgrade(env: Env) -> Result<(), ContractError> {
+        Self::assert_admin(&env)?;
+
+        let pending: PendingUpgrade = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PendingUpgrade)
+            .ok_or(ContractError::NoPendingUpgrade)?;
+
+        let now = env.ledger().sequence();
+        if now < pending.ready_at {
+            return Err(ContractError::UpgradeTimelockNotElapsed);
+        }
+
+        env.storage().persistent().remove(&DataKey::PendingUpgrade);
+        env.deployer()
+            .update_current_contract_wasm(pending.wasm_hash.clone());
+
+        UpgradeExecutedEvent {
+            wasm_hash: pending.wasm_hash,
+            executed_at: now,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -3717,9 +3842,7 @@ impl Contract {
 
         escrow.buyer.require_auth();
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         if milestone_index >= escrow.milestones.len() {
             return Err(ContractError::MilestoneNotFound);
@@ -3814,9 +3937,7 @@ impl Contract {
         // Only buyer can set time lock in this version (restored for API compatibility)
         escrow.buyer.require_auth();
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let time_lock = TimeLock {
             release_ledger,
@@ -3855,9 +3976,7 @@ impl Contract {
             .get(&DataKey::Escrow(escrow_id))
             .ok_or(ContractError::EscrowNotFound)?;
 
-        if escrow.status != EscrowStatus::Pending && escrow.status != EscrowStatus::Funded {
-            return Err(ContractError::InvalidEscrowState);
-        }
+        Self::assert_escrow_funded(&escrow)?;
 
         let time_lock = escrow
             .time_lock

@@ -126,6 +126,9 @@ pub enum DataKey {
     PendingOracleRelease(u64),
     /// Contract upgrade proposed but not yet executed (#242).
     PendingUpgrade,
+    /// Marks that an escrow's fee has already been collected via
+    /// `batch_collect_fees`, preventing it from being collected twice (#259).
+    EscrowFeeCollected(u64),
 }
 
 pub const MAX_METADATA_SIZE: u32 = 1024;
@@ -145,6 +148,10 @@ pub const MAX_EVIDENCE_HASH_SIZE: u32 = 128;
 
 /// Maximum number of items per escrow
 pub const MAX_ITEMS_PER_ESCROW: u32 = 50;
+
+/// Maximum number of escrows that may be processed in a single
+/// `batch_collect_fees` call (#259).
+pub const MAX_ESCROWS_PER_BATCH: u32 = 50;
 
 /// Represents a single item/milestone within an escrow
 #[contracttype]

@@ -22,6 +22,7 @@ export const CURRENT_SCHEMA_VERSION = 1;
 export const MAX_TRACKING_ID_SIZE = 128;
 export const MAX_EVIDENCE_HASH_SIZE = 128;
 export const MAX_ITEMS_PER_ESCROW = 50;
+export const MAX_ESCROWS_PER_BATCH = 50;
 export const UNFUNDED_EXPIRY_LEDGERS = 120960;
 export const DEFAULT_EVIDENCE_WINDOW_LEDGERS = 34560;
 export const APPEAL_WINDOW_LEDGERS = 17280;
@@ -241,7 +242,8 @@ export type DataKey =
   | { TokenPaused: string }
   | 'SchemaVersion'
   | { EscrowSchemaVersion: number }
-  | { PendingOracleRelease: number };
+  | { PendingOracleRelease: number }
+  | { EscrowFeeCollected: number };
 
 export interface EscrowCreatedEvent {
   escrow_id: number;

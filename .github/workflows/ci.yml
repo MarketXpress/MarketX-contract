@@ -42,8 +42,24 @@ jobs:
         with:
           targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-opt
+        run: sudo apt-get update && sudo apt-get install -y binaryen
       - name: Build production WASM artifacts
         run: ./scripts/build_wasm.sh
+      - name: Print WASM artifact sizes
+        run: |
+          {
+            echo "## Optimized WASM Artifacts"
+            echo ""
+            find target -name '*.wasm' -type f | sort | while read -r f; do
+              size=$(stat -c%s "$f")
+              echo "- \`$f\`: $size bytes"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          find target -name '*.wasm' -type f | sort | while read -r f; do
+            size=$(stat -c%s "$f")
+            echo "$f: $size bytes"
+          done
 
   test:
     name: Tests
@@ -54,3 +70,39 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test
+
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit
+      - name: Run cargo audit
+        run: cargo audit
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin --features nocoverage-compression
+      - name: Run coverage
+        run: cargo tarpaulin --all-features --workspace --timeout 120 --out Stdout
+
+  sdk-parity:
+    name: SDK Error Code Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check SDK error code parity
+        run: python3 scripts/check_error_parity.py

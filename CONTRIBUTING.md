@@ -74,6 +74,53 @@ make check
 
 `make check` must succeed with **zero warnings** before opening a PR. The CI pipeline enforces this automatically.
 
+## Dependency Scanning
+
+```bash
+# Install the audit tool
+cargo install cargo-audit
+
+# Scan for known security advisories
+cargo audit
+```
+
+`cargo audit` must pass with **zero advisories** before opening a PR. Fix any reported advisories as separate issues.
+
+## Coverage
+
+```bash
+# Install the coverage tool
+cargo install cargo-tarpaulin --features nocoverage-compression
+
+# Run coverage across the workspace
+cargo tarpaulin --all-features --workspace --timeout 120
+```
+
+Coverage results are reported in CI. There is no enforced minimum threshold yet; proposing one is welcome.
+
+## SDK Error Code Parity
+
+```bash
+# Verify that every error code in the Rust contract has a matching entry in the SDK
+python3 scripts/check_error_parity.py
+```
+
+When adding a new `ContractError` variant, always update `sdk/error-codes.ts` to keep the parity check green.
+
+## Local CI Workflow
+
+To reproduce the full CI pipeline locally before pushing:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+./scripts/build_wasm.sh
+cargo audit
+cargo tarpaulin --all-features --workspace --timeout 120
+python3 scripts/check_error_parity.py
+```
+
 ---
 
 ## Code Style Rules

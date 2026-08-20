@@ -106,17 +106,17 @@ pub use types::{
     ArbitersConfig, ArbitersConfiguredEvent, BatchFeesCollectedEvent, BulkEscrowCreatedEvent,
     BulkEscrowRequest, BuyerContribution, CancellationProposedEvent, ContractResourceProfile,
     ContractVersion, CounterEvidenceSubmittedEvent, DataKey, DeliveryVerifiedEvent,
-    DisputeConsensusReachedEvent, DisputeVotingRecord, Escrow, EscrowCreatedEvent,
-    EscrowExpiredEvent, EscrowItem, EscrowStatus, EvidenceSubmittedEvent, EvidenceWindow,
-    EvidenceWindowExpiredEvent, FeeCapsChangedEvent, FeeChangedEvent, FeeCollectedEvent,
-    FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent, FundsReleasedEvent,
-    GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent, GroupBuyFundedEvent,
-    MediationOpenedEvent, MediationPhase, MediationProposedEvent, MediationSettledEvent,
-    MetadataVisibility, Milestone, MilestoneCompletedEvent, PendingOracleRelease, PendingUpgrade,
-    RefundHistoryEntry, RefundReason, RefundRequest, RefundRequestedEvent, RefundStatus,
-    StatusChangeEvent, StorageRentEstimate, TimeLock, TimeLockReleasedEvent,
-    TokenCircuitBreakerEvent, UpgradeCancelledEvent, UpgradeExecutedEvent, UpgradeProposedEvent,
-    APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
+    DisputeConsensusReachedEvent, DisputeVotingRecord, Escrow, EscrowCancelledEvent,
+    EscrowCreatedEvent, EscrowExpiredEvent, EscrowItem, EscrowStatus, EvidenceSubmittedEvent,
+    EvidenceWindow, EvidenceWindowExpiredEvent, FeeCapsChangedEvent, FeeChangedEvent,
+    FeeCollectedEvent, FeeCollectorRotatedEvent, FeeExemptionEvent, FeesWithdrawnEvent,
+    FundsReleasedEvent, GlobalDisputeAnalytics, GroupBuy, GroupBuyCompletedEvent,
+    GroupBuyFundedEvent, MediationOpenedEvent, MediationPhase, MediationProposedEvent,
+    MediationSettledEvent, MetadataVisibility, Milestone, MilestoneCompletedEvent,
+    PendingOracleRelease, PendingUpgrade, RefundHistoryEntry, RefundReason, RefundRequest,
+    RefundRequestedEvent, RefundStatus, StatusChangeEvent, StorageRentEstimate, TimeLock,
+    TimeLockReleasedEvent, TokenCircuitBreakerEvent, UpgradeCancelledEvent, UpgradeExecutedEvent,
+    UpgradeProposedEvent, APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
     DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
@@ -330,7 +330,7 @@ impl Contract {
         env.storage().persistent().set(&key, &(current + amount));
     }
 
-    fn refund_buyer(env: &Env, escrow: &mut Escrow) {
+    fn settle_to_buyer(env: &Env, escrow: &mut Escrow, status: EscrowStatus) {
         let token_client = soroban_sdk::token::Client::new(env, &escrow.token);
         token_client.transfer(
             &env.current_contract_address(),
@@ -338,10 +338,23 @@ impl Contract {
             &escrow.amount,
         );
 
-        escrow.status = EscrowStatus::Refunded;
+        escrow.status = status.clone();
         escrow.cancellation_proposer = None;
-        Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
-        Self::add_u32(env, DataKey::TotalRefundedCount);
+        if status == EscrowStatus::Cancelled {
+            Self::add_i128(env, DataKey::TotalCancelledAmount, escrow.amount);
+            Self::add_u32(env, DataKey::TotalCancelledCount);
+        } else {
+            Self::add_i128(env, DataKey::TotalRefundedAmount, escrow.amount);
+            Self::add_u32(env, DataKey::TotalRefundedCount);
+        }
+    }
+
+    fn refund_buyer(env: &Env, escrow: &mut Escrow) {
+        Self::settle_to_buyer(env, escrow, EscrowStatus::Refunded);
+    }
+
+    fn cancel_to_buyer(env: &Env, escrow: &mut Escrow) {
+        Self::settle_to_buyer(env, escrow, EscrowStatus::Cancelled);
     }
 
     fn validate_metadata(metadata: &Option<Bytes>) -> Result<(), ContractError> {
@@ -486,6 +499,9 @@ impl Contract {
             .set(&DataKey::TotalRefundedAmount, &0i128);
         env.storage()
             .persistent()
+            .set(&DataKey::TotalReleasedAmount, &0i128);
+        env.storage()
+            .persistent()
             .set(&DataKey::TotalDisputedCount, &0u32);
         env.storage()
             .persistent()
@@ -496,6 +512,9 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalCancelledCount, &0u32);
+        env.storage()
+            .persistent()
+            .set(&DataKey::TotalCancelledAmount, &0i128);
         env.storage()
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);
@@ -877,6 +896,13 @@ impl Contract {
         env.storage()
             .persistent()
             .get(&DataKey::TotalCancelledCount)
+            .unwrap_or(0)
+    }
+
+    pub fn get_total_cancelled_amount(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalCancelledAmount)
             .unwrap_or(0)
     }
 
@@ -1592,11 +1618,19 @@ impl Contract {
 
             // If the other party already proposed, auto-accept the cancellation
             let from_status = escrow.status.clone();
-            Self::refund_buyer(&env, &mut escrow);
+            Self::cancel_to_buyer(&env, &mut escrow);
             env.storage()
                 .persistent()
                 .set(&DataKey::Escrow(escrow_id), &escrow);
             Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+            EscrowCancelledEvent {
+                escrow_id,
+                buyer: escrow.buyer.clone(),
+                seller: escrow.seller.clone(),
+                amount: escrow.amount,
+                was_funded: true,
+            }
+            .publish(&env);
             return Ok(());
         }
 
@@ -1642,11 +1676,19 @@ impl Contract {
         }
 
         let from_status = escrow.status.clone();
-        Self::refund_buyer(&env, &mut escrow);
+        Self::cancel_to_buyer(&env, &mut escrow);
         env.storage()
             .persistent()
             .set(&DataKey::Escrow(escrow_id), &escrow);
         Self::emit_status_change(&env, escrow_id, from_status, escrow.status.clone(), actor);
+        EscrowCancelledEvent {
+            escrow_id,
+            buyer: escrow.buyer.clone(),
+            seller: escrow.seller.clone(),
+            amount: escrow.amount,
+            was_funded: true,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -1809,10 +1851,13 @@ impl Contract {
             .persistent()
             .remove(&DataKey::EscrowHash(hash));
 
-        EscrowExpiredEvent {
+        Self::add_u32(&env, DataKey::TotalCancelledCount);
+        EscrowCancelledEvent {
             escrow_id,
-            buyer: escrow.buyer,
-            seller: escrow.seller,
+            buyer: escrow.buyer.clone(),
+            seller: escrow.seller.clone(),
+            amount: escrow.amount,
+            was_funded: false,
         }
         .publish(&env);
 

@@ -153,6 +153,38 @@ pub const MAX_ITEMS_PER_ESCROW: u32 = 50;
 /// `batch_collect_fees` call (#259).
 pub const MAX_ESCROWS_PER_BATCH: u32 = 50;
 
+/// Maximum number of escrows that may be returned by a single
+/// `get_escrows` page. Caller-supplied `limit` values above this are
+/// silently clamped rather than erroring, since pagination is a read-only
+/// convenience view and clamping keeps callers from being able to force an
+/// unbounded storage scan in one call (#260).
+///
+/// Each returned escrow is one read ledger entry, plus a handful of fixed
+/// entries (e.g. the escrow counter, the contract instance itself) read on
+/// every invocation. Soroban's current per-transaction footprint limit is
+/// ~100 unique ledger entries, so a page of 100 would already be at (or
+/// past) that ceiling with no room left for the fixed overhead — kept
+/// comfortably under it instead.
+pub const MAX_PAGE_SIZE: u32 = 50;
+
+/// Maximum number of requests that may be submitted in a single
+/// `create_bulk_escrows` call. Each request creates a full escrow record,
+/// so this bounds the resource cost of one transaction the same way
+/// `MAX_ITEMS_PER_ESCROW` bounds a single escrow's item list (#260).
+///
+/// Each escrow written costs 2 unique write entries (the `Escrow` record
+/// and its duplicate-prevention hash), plus the shared escrow counter.
+/// Soroban's current per-transaction write-entry limit is ~50, so this is
+/// kept well under the point where a full-size call would itself fail on a
+/// real network.
+pub const MAX_BULK_ESCROWS_PER_CALL: u32 = 20;
+
+/// Maximum number of milestones per `create_milestone_escrow` call (#260).
+pub const MAX_MILESTONES_PER_ESCROW: u32 = 50;
+
+/// Maximum number of buyers per `create_group_buy_escrow` call (#260).
+pub const MAX_GROUP_BUY_BUYERS: u32 = 50;
+
 /// Represents a single item/milestone within an escrow
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

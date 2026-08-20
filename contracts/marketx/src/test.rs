@@ -9,7 +9,10 @@ use soroban_sdk::{
 
 use crate::errors::ContractError;
 // MAX_METADATA_SIZE was warned as unused, but it's used later. Keep it.
-use crate::types::{EscrowItem, MAX_METADATA_SIZE};
+use crate::types::{
+    BuyerContribution, EscrowItem, Milestone, MAX_BULK_ESCROWS_PER_CALL, MAX_GROUP_BUY_BUYERS,
+    MAX_METADATA_SIZE, MAX_MILESTONES_PER_ESCROW, MAX_PAGE_SIZE,
+};
 use crate::{
     BulkEscrowRequest, Contract, ContractClient, EscrowCreatedEvent, FundsReleasedEvent,
     StatusChangeEvent,
@@ -3912,4 +3915,207 @@ fn non_admin_cannot_execute_or_cancel_an_upgrade() {
 
     // The proposal survives both failed attempts.
     assert!(client.get_pending_upgrade().is_some());
+}
+
+// ─── Issue #260: Input hardening — bounded collections & typed index errors ──
+
+#[test]
+fn test_complete_milestone_invalid_index_fails() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let mut milestones = Vec::new(&env);
+    milestones.push_back(Milestone {
+        description: Bytes::new(&env),
+        amount: 50_000_000,
+        completed: false,
+        completed_at: None,
+    });
+
+    token_admin.mint(&buyer, &50_000_000);
+
+    let escrow_id = client.create_milestone_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &50_000_000,
+        &milestones,
+        &None,
+        &None,
+    );
+
+    client.fund_escrow(&escrow_id);
+
+    // Out-of-range milestone index must return a typed error, not panic.
+    let result = client.try_complete_milestone(&escrow_id, &5u32);
+    assert_eq!(result, Err(Ok(ContractError::MilestoneNotFound)));
+}
+
+#[test]
+fn test_create_milestone_escrow_rejects_too_many_milestones() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let make_milestones = |count: u32| -> Vec<Milestone> {
+        let mut milestones = Vec::new(&env);
+        for _ in 0..count {
+            milestones.push_back(Milestone {
+                description: Bytes::new(&env),
+                amount: 1,
+                completed: false,
+                completed_at: None,
+            });
+        }
+        milestones
+    };
+
+    // Exactly MAX_MILESTONES_PER_ESCROW is accepted.
+    let escrow_id = client.create_milestone_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &(MAX_MILESTONES_PER_ESCROW as i128),
+        &make_milestones(MAX_MILESTONES_PER_ESCROW),
+        &None,
+        &None,
+    );
+    assert!(client.get_escrow(&escrow_id).is_some());
+
+    // One over the limit is rejected with a typed error.
+    let result = client.try_create_milestone_escrow(
+        &buyer,
+        &seller,
+        &token,
+        &((MAX_MILESTONES_PER_ESCROW + 1) as i128),
+        &make_milestones(MAX_MILESTONES_PER_ESCROW + 1),
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::TooManyItems)));
+}
+
+#[test]
+fn test_create_bulk_escrows_rejects_too_many_requests() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let make_requests = |count: u32| -> Vec<BulkEscrowRequest> {
+        let mut requests = Vec::new(&env);
+        for _ in 0..count {
+            requests.push_back(BulkEscrowRequest {
+                seller: Address::generate(&env),
+                amount: 1,
+                metadata: None,
+                arbiter: None,
+                items: None,
+            });
+        }
+        requests
+    };
+
+    // Exactly MAX_BULK_ESCROWS_PER_CALL is accepted.
+    let ids = client.create_bulk_escrows(&buyer, &token, &make_requests(MAX_BULK_ESCROWS_PER_CALL));
+    assert_eq!(ids.len(), MAX_BULK_ESCROWS_PER_CALL);
+
+    // One over the limit is rejected with a typed error, not a resource trap.
+    let result = client.try_create_bulk_escrows(
+        &buyer,
+        &token,
+        &make_requests(MAX_BULK_ESCROWS_PER_CALL + 1),
+    );
+    assert_eq!(result, Err(Ok(ContractError::TooManyItems)));
+}
+
+#[test]
+fn test_create_group_buy_escrow_rejects_too_many_buyers() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    let make_buyers = |count: u32| -> Vec<BuyerContribution> {
+        let mut buyers = Vec::new(&env);
+        for _ in 0..count {
+            buyers.push_back(BuyerContribution {
+                buyer: Address::generate(&env),
+                amount: 1,
+                funded: false,
+            });
+        }
+        buyers
+    };
+
+    let deadline = env.ledger().sequence() + 1000;
+
+    // Exactly MAX_GROUP_BUY_BUYERS is accepted.
+    let escrow_id = client.create_group_buy_escrow(
+        &seller,
+        &token,
+        &(MAX_GROUP_BUY_BUYERS as i128),
+        &make_buyers(MAX_GROUP_BUY_BUYERS),
+        &deadline,
+        &None,
+        &None,
+    );
+    assert!(client.get_escrow(&escrow_id).is_some());
+
+    // One over the limit is rejected with a typed error.
+    let result = client.try_create_group_buy_escrow(
+        &seller,
+        &token,
+        &((MAX_GROUP_BUY_BUYERS + 1) as i128),
+        &make_buyers(MAX_GROUP_BUY_BUYERS + 1),
+        &deadline,
+        &None,
+        &None,
+    );
+    assert_eq!(result, Err(Ok(ContractError::TooManyItems)));
+}
+
+#[test]
+fn test_get_escrows_limit_clamped_to_max_page_size() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+
+    // Distinct sellers keep duplicate-escrow hashing from colliding.
+    let total = MAX_PAGE_SIZE + 10;
+    for _ in 0..total {
+        let seller = Address::generate(&env);
+        client.create_escrow(&buyer, &seller, &token, &1, &None, &None, &None, &None);
+    }
+
+    // A limit above MAX_PAGE_SIZE is silently clamped down to it.
+    let over_limit_page = client.get_escrows(&1, &(MAX_PAGE_SIZE + 50));
+    assert_eq!(over_limit_page.len(), MAX_PAGE_SIZE);
+
+    // A limit exactly at MAX_PAGE_SIZE still returns a full page.
+    let at_limit_page = client.get_escrows(&1, &MAX_PAGE_SIZE);
+    assert_eq!(at_limit_page.len(), MAX_PAGE_SIZE);
 }

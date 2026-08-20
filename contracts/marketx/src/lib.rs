@@ -119,9 +119,10 @@ pub use types::{
     APPEAL_WINDOW_LEDGERS, CONTRACT_VERSION, CURRENT_SCHEMA_VERSION,
     DEFAULT_ARBITER_QUORUM_PERCENTAGE, DEFAULT_EVIDENCE_WINDOW_LEDGERS,
     DEFAULT_MAX_ARBITERS_PER_ESCROW, DEFAULT_MEDIATION_WINDOW_LEDGERS,
-    DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS, MAX_DESCRIPTION_SIZE,
-    MAX_ESCROWS_PER_BATCH, MAX_EVIDENCE_HASH_SIZE, MAX_ITEMS_PER_ESCROW,
-    MAX_MEDIATION_WINDOW_LEDGERS, MAX_METADATA_SIZE, MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
+    DEFAULT_MIN_ARBITERS_REQUIRED, DEFAULT_ORACLE_CHALLENGE_WINDOW_LEDGERS,
+    MAX_BULK_ESCROWS_PER_CALL, MAX_DESCRIPTION_SIZE, MAX_ESCROWS_PER_BATCH, MAX_EVIDENCE_HASH_SIZE,
+    MAX_GROUP_BUY_BUYERS, MAX_ITEMS_PER_ESCROW, MAX_MEDIATION_WINDOW_LEDGERS, MAX_METADATA_SIZE,
+    MAX_MILESTONES_PER_ESCROW, MAX_PAGE_SIZE, MAX_TRACKING_ID_SIZE, UNFUNDED_EXPIRY_LEDGERS,
     UPGRADE_TIMELOCK_LEDGERS,
 };
 
@@ -211,6 +212,12 @@ impl Contract {
 
     fn add_i128(env: &Env, key: DataKey, value: i128) {
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
+        // These are contract-wide analytics counters (total funded/released/
+        // fees, etc.), incremented by per-escrow amounts that are themselves
+        // bounded by i128 token balances. Reaching i128::MAX would require
+        // aggregate volume many orders of magnitude beyond any real token
+        // supply, so this is unreachable in practice; `expect` documents the
+        // invariant instead of silently wrapping or truncating a stats value.
         let next = current.checked_add(value).expect("Global counter overflow");
         env.storage().persistent().set(&key, &next);
     }
@@ -289,7 +296,7 @@ impl Contract {
         token: &Address,
         seller: &Address,
         buyer: &Address,
-    ) -> i128 {
+    ) -> Result<i128, ContractError> {
         let fee = Self::calculate_fee_internal(env, amount, token, buyer);
         let seller_amount = amount - fee;
 
@@ -301,7 +308,7 @@ impl Contract {
                 .storage()
                 .persistent()
                 .get(&DataKey::FeeCollector)
-                .expect("Fee collector not configured");
+                .ok_or(ContractError::InvalidFeeConfig)?;
 
             Self::add_pending_fee(env, fee_collector.clone(), token.clone(), fee);
             Self::add_i128(env, DataKey::TotalFeesCollected, fee);
@@ -314,7 +321,7 @@ impl Contract {
             .publish(env);
         }
 
-        fee
+        Ok(fee)
     }
 
     fn validate_bytes_size(data: &Bytes, max: u32) -> Result<(), ContractError> {
@@ -684,6 +691,9 @@ impl Contract {
     }
 
     /// Create multiple escrows in a single transaction (Bulk Creation).
+    ///
+    /// # Errors
+    /// * `TooManyItems` - If `requests` exceeds `MAX_BULK_ESCROWS_PER_CALL`
     pub fn create_bulk_escrows(
         env: Env,
         buyer: Address,
@@ -692,6 +702,10 @@ impl Contract {
     ) -> Result<Vec<u64>, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
+
+        if requests.len() > MAX_BULK_ESCROWS_PER_CALL {
+            return Err(ContractError::TooManyItems);
+        }
 
         let mut ids = Vec::new(&env);
         for request in requests.iter() {
@@ -775,15 +789,13 @@ impl Contract {
             return Ok(());
         }
 
-        if caller == &escrow.buyer
-            || caller == &escrow.seller
-            || caller
-                == &env
-                    .storage()
-                    .persistent()
-                    .get::<DataKey, Address>(&DataKey::Admin)
-                    .unwrap()
-        {
+        let is_admin = env
+            .storage()
+            .persistent()
+            .get::<DataKey, Address>(&DataKey::Admin)
+            .is_some_and(|admin| caller == &admin);
+
+        if caller == &escrow.buyer || caller == &escrow.seller || is_admin {
             return Ok(());
         }
 
@@ -803,6 +815,9 @@ impl Contract {
     }
 
     /// Get a paginated list of escrows.
+    ///
+    /// `limit` is clamped to `MAX_PAGE_SIZE` so a caller cannot force an
+    /// unbounded storage scan in a single call (#260).
     pub fn get_escrows(env: Env, start: u64, limit: u32) -> Vec<Option<Escrow>> {
         let counter: u64 = env
             .storage()
@@ -816,6 +831,7 @@ impl Contract {
             return result;
         }
 
+        let limit = limit.min(MAX_PAGE_SIZE);
         let end = (start + limit as u64 - 1).min(counter);
 
         for id in start..=end {
@@ -1456,7 +1472,7 @@ impl Contract {
             &escrow.token,
             &escrow.seller,
             &escrow.buyer,
-        );
+        )?;
 
         escrow.status = EscrowStatus::Released;
         escrow.cancellation_proposer = None;
@@ -1512,11 +1528,10 @@ impl Contract {
 
         escrow.buyer.require_auth();
 
-        if item_index as u32 >= escrow.items.len() {
-            return Err(ContractError::ItemNotFound);
-        }
-
-        let mut item = escrow.items.get(item_index as u32).unwrap();
+        let mut item = escrow
+            .items
+            .get(item_index)
+            .ok_or(ContractError::ItemNotFound)?;
         if item.released {
             return Err(ContractError::ItemAlreadyReleased);
         }
@@ -1531,7 +1546,7 @@ impl Contract {
             &escrow.token,
             &escrow.seller,
             &escrow.buyer,
-        );
+        )?;
 
         let all_released = escrow.items.iter().all(|i| i.released);
 
@@ -1978,7 +1993,7 @@ impl Contract {
                     &escrow.token,
                     &escrow.seller,
                     &escrow.buyer,
-                );
+                )?;
 
                 FundsReleasedEvent {
                     escrow_id,
@@ -3363,7 +3378,11 @@ impl Contract {
         // The proposed admin must authenticate this transaction
         proposed_admin.require_auth();
 
-        let old_admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        let old_admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .ok_or(ContractError::NotAdmin)?;
 
         // Transfer the admin role
         env.storage()
@@ -3761,6 +3780,7 @@ impl Contract {
     /// * `arbiter` - Optional arbiter
     ///
     /// # Errors
+    /// * `TooManyItems` - If `milestones` exceeds `MAX_MILESTONES_PER_ESCROW`
     /// * `ItemAmountInvalid` - If milestone amounts don't sum to total amount
     pub fn create_milestone_escrow(
         env: Env,
@@ -3774,6 +3794,10 @@ impl Contract {
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
         buyer.require_auth();
+
+        if milestones.len() > MAX_MILESTONES_PER_ESCROW {
+            return Err(ContractError::TooManyItems);
+        }
 
         // Validate milestone amounts sum to total
         let milestone_sum: i128 = milestones.iter().map(|m| m.amount).sum();
@@ -3803,12 +3827,15 @@ impl Contract {
             .persistent()
             .set(&DataKey::MilestoneEscrow(escrow_id), &milestones);
 
-        // Update escrow with milestones
+        // Update escrow with milestones. `escrow_id` was just returned by
+        // `create_escrow_internal`, which stores the record before
+        // returning, so this lookup cannot miss in practice; the typed
+        // error is defensive rather than reachable.
         let mut escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
-            .unwrap();
+            .ok_or(ContractError::EscrowNotFound)?;
         escrow.milestones = milestones;
         env.storage()
             .persistent()
@@ -3844,11 +3871,10 @@ impl Contract {
 
         Self::assert_escrow_funded(&escrow)?;
 
-        if milestone_index >= escrow.milestones.len() {
-            return Err(ContractError::MilestoneNotFound);
-        }
-
-        let mut milestone = escrow.milestones.get(milestone_index).unwrap();
+        let mut milestone = escrow
+            .milestones
+            .get(milestone_index)
+            .ok_or(ContractError::MilestoneNotFound)?;
         if milestone.completed {
             return Err(ContractError::MilestoneAlreadyCompleted);
         }
@@ -3864,7 +3890,7 @@ impl Contract {
             &escrow.token,
             &escrow.seller,
             &escrow.buyer,
-        );
+        )?;
 
         let all_completed = escrow.milestones.iter().all(|m| m.completed);
         if all_completed {
@@ -4002,7 +4028,7 @@ impl Contract {
             &escrow.token,
             &escrow.seller,
             &escrow.buyer,
-        );
+        )?;
 
         escrow.status = EscrowStatus::Released;
         env.storage()
@@ -4057,6 +4083,7 @@ impl Contract {
     /// * `arbiter` - Optional arbiter
     ///
     /// # Errors
+    /// * `TooManyItems` - If `buyers` exceeds `MAX_GROUP_BUY_BUYERS`
     /// * `InvalidGroupBuyAmount` - If buyer contributions don't sum to target amount
     pub fn create_group_buy_escrow(
         env: Env,
@@ -4069,6 +4096,10 @@ impl Contract {
         arbiter: Option<Address>,
     ) -> Result<u64, ContractError> {
         Self::assert_not_paused(&env)?;
+
+        if buyers.len() > MAX_GROUP_BUY_BUYERS {
+            return Err(ContractError::TooManyItems);
+        }
 
         // Validate buyer contributions sum to target
         let contributions_sum: i128 = buyers.iter().map(|b| b.amount).sum();
@@ -4104,12 +4135,15 @@ impl Contract {
             funding_deadline,
         };
 
-        // Update escrow with group buy config
+        // Update escrow with group buy config. `escrow_id` was just returned
+        // by `create_escrow_internal`, which stores the record before
+        // returning, so this lookup cannot miss in practice; the typed
+        // error is defensive rather than reachable.
         let mut escrow: Escrow = env
             .storage()
             .persistent()
             .get(&DataKey::Escrow(escrow_id))
-            .unwrap();
+            .ok_or(ContractError::EscrowNotFound)?;
         let mut gb_vec = Vec::new(&env);
         gb_vec.push_back(group_buy.clone());
         escrow.group_buy = gb_vec;
@@ -4179,8 +4213,13 @@ impl Contract {
         let token_client = soroban_sdk::token::Client::new(&env, &escrow.token);
         token_client.transfer(&buyer, env.current_contract_address(), &buyer_amount);
 
-        // Update buyer contribution
-        let mut contribution = group_buy.buyers.get(index).unwrap();
+        // Update buyer contribution. `index` was just found via `enumerate()`
+        // over this same vec, so it is always in bounds; the typed error is
+        // defensive rather than reachable.
+        let mut contribution = group_buy
+            .buyers
+            .get(index)
+            .ok_or(ContractError::Unauthorized)?;
         contribution.funded = true;
         group_buy.buyers.set(index, contribution);
         group_buy.funded_amount += buyer_amount;
@@ -4269,8 +4308,13 @@ impl Contract {
 
         let index = buyer_index.ok_or(ContractError::Unauthorized)?;
 
-        // Update state first (Effect)
-        let mut contribution = group_buy.buyers.get(index).unwrap();
+        // Update state first (Effect). `index` was just found via
+        // `enumerate()` over this same vec, so it is always in bounds; the
+        // typed error is defensive rather than reachable.
+        let mut contribution = group_buy
+            .buyers
+            .get(index)
+            .ok_or(ContractError::Unauthorized)?;
         contribution.funded = false;
         group_buy.buyers.set(index, contribution);
         group_buy.funded_amount -= buyer_amount;
@@ -4424,7 +4468,7 @@ impl Contract {
                     .storage()
                     .persistent()
                     .get(&DataKey::FeeCollector)
-                    .expect("Fee collector not configured");
+                    .ok_or(ContractError::InvalidFeeConfig)?;
                 Self::add_pending_fee(env, fee_collector.clone(), escrow.token.clone(), fee);
                 Self::add_i128(env, DataKey::TotalFeesCollected, fee);
                 FeeCollectedEvent {

@@ -70,6 +70,7 @@ pub enum DataKey {
     TotalReleasedCount,
     TotalRefundedCount,
     TotalCancelledCount,
+    TotalCancelledAmount,
     TotalFeesCollected,
     EscrowIds,
 
@@ -374,6 +375,17 @@ pub struct CancellationProposedEvent {
     #[topic]
     pub escrow_id: u64,
     pub actor: Address,
+}
+
+#[contractevent(topics = ["escrow_cancelled"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowCancelledEvent {
+    #[topic]
+    pub escrow_id: u64,
+    pub buyer: Address,
+    pub seller: Address,
+    pub amount: i128,
+    pub was_funded: bool,
 }
 
 #[contractevent(topics = ["fee_changed"], data_format = "vec")]

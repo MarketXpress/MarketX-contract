@@ -1,9 +1,10 @@
 #[cfg(test)]
 extern crate std;
 
-use soroban_sdk::testutils::Events;
 use soroban_sdk::{
-    testutils::{storage::Persistent as _, Address as _, Ledger as _, MockAuth, MockAuthInvoke},
+    testutils::{
+        storage::Persistent as _, Address as _, Events as _, Ledger as _, MockAuth, MockAuthInvoke,
+    },
     Address, Bytes, Env, Event, IntoVal, Vec,
 };
 
@@ -902,7 +903,7 @@ fn fund_fails_if_buyer_has_insufficient_balance() {
 }
 
 #[test]
-fn seller_can_accept_buyer_cancellation_and_refund_immediately() {
+fn seller_can_accept_buyer_cancellation_and_record_cancellation() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
     let buyer = Address::generate(&env);
@@ -933,10 +934,13 @@ fn seller_can_accept_buyer_cancellation_and_refund_immediately() {
 
     assert_eq!(token.balance(&buyer), 1000);
     assert_eq!(token.balance(&client.address), 0);
-    assert_eq!(client.get_total_refunded_amount(), 1000);
+    assert_eq!(client.get_total_refunded_amount(), 0);
+    assert_eq!(client.get_total_refunded_count(), 0);
+    assert_eq!(client.get_total_cancelled_count(), 1);
+    assert_eq!(client.get_total_cancelled_amount(), 1000);
 
     let escrow = client.get_escrow(&escrow_id).unwrap();
-    assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Cancelled);
     assert_eq!(escrow.cancellation_proposer, None);
 }
 
@@ -1282,6 +1286,9 @@ fn test_arbiter_can_refund_buyer_on_dispute() {
     assert_eq!(token.balance(&buyer), 1000);
     let escrow = client.get_escrow(&escrow_id).unwrap();
     assert_eq!(escrow.status, crate::types::EscrowStatus::Refunded);
+    assert_eq!(client.get_total_refunded_count(), 1);
+    assert_eq!(client.get_total_refunded_amount(), 1000);
+    assert_eq!(client.get_total_cancelled_count(), 0);
 }
 
 #[test]
@@ -2151,6 +2158,8 @@ fn test_cancel_unfunded_removes_escrow_after_expiry() {
 
     // Escrow should be gone
     assert!(client.get_escrow(&escrow_id).is_none());
+    assert_eq!(client.get_total_cancelled_count(), 1);
+    assert_eq!(client.get_total_cancelled_amount(), 0);
 }
 
 #[test]

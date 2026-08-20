@@ -75,17 +75,25 @@ fi
 
 find "$ARTIFACT_DIR" -maxdepth 1 -type f -name '*.wasm' -print | sort
 
-if [ "$OPTIMIZE" = "true" ] && command -v wasm-opt >/dev/null 2>&1; then
+if [ "$OPTIMIZE" = "true" ]; then
+  if ! command -v wasm-opt >/dev/null 2>&1; then
+    echo "error: wasm-opt not available; install binaryen to enable post-build wasm optimization." >&2
+    exit 1
+  fi
   echo "Found wasm-opt, optimizing generated artifacts..."
   while read -r wasm_file; do
     opt_file="${wasm_file%.wasm}.opt.wasm"
     wasm-opt -Oz -o "$opt_file" "$wasm_file"
     printf 'Optimized %s -> %s\n' "$wasm_file" "$opt_file"
   done < <(find "$ARTIFACT_DIR" -maxdepth 1 -type f -name '*.wasm' | sort)
-else
-  if [ "$OPTIMIZE" = "true" ]; then
-    echo "wasm-opt not available; skipping post-build wasm optimization."
-  fi
 fi
 
 printf '\nProduction WASM build complete. Artifacts in %s\n' "$ARTIFACT_DIR"
+
+if [ "$OPTIMIZE" = "true" ]; then
+  printf '\nOptimized WASM sizes:\n'
+  find "$ARTIFACT_DIR" -maxdepth 1 -type f -name '*.wasm' -print | sort | while read -r wasm_file; do
+    size=$(stat -c%s "$wasm_file" 2>/dev/null || stat -f%z "$wasm_file" 2>/dev/null || echo "unknown")
+    printf '  %s: %s bytes\n' "$wasm_file" "$size"
+  done
+fi

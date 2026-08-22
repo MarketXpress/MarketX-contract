@@ -6,7 +6,9 @@ use soroban_sdk::contracterror;
 pub enum ContractError {
     NotAdmin = 1,
     Unauthorized = 2,
+    /// Caller is not the proposed administrator.
     NotProposedAdmin = 3,
+    /// Caller is not the configured oracle.
     NotOracle = 4,
     EscrowNotFound = 10,
     InvalidEscrowState = 11,
@@ -22,13 +24,21 @@ pub enum ContractError {
     ItemAmountInvalid = 83,
     EscrowNotExpired = 90,
     EscrowAlreadyFunded = 91,
+    /// The requested milestone does not exist.
     MilestoneNotFound = 100,
+    /// The requested milestone was already completed.
     MilestoneAlreadyCompleted = 101,
+    /// The escrow timelock has not been reached.
     TimeLockNotReached = 110,
+    /// Timelock release is not enabled for this escrow.
     TimeLockNotEnabled = 111,
+    /// The group buy has not received enough funding.
     GroupBuyNotFunded = 120,
+    /// The group buy has already been funded.
     GroupBuyAlreadyFunded = 121,
+    /// The group buy deadline has passed.
     GroupBuyDeadlinePassed = 122,
+    /// The group buy amount is invalid.
     InvalidGroupBuyAmount = 123,
 
     // ── Dispute Resolution V2 (#201-204) ─────────────────────────────────────

@@ -154,6 +154,38 @@ impl Contract {
             .unwrap_or(0)
     }
 
+    pub fn get_total_fees_collected(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalFeesCollected)
+            .unwrap_or(0)
+    }
+
+    pub fn get_buyer_volume(env: Env, buyer: Address) -> i128 {
+        let config: VolumeTierConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or_default();
+        Self::buyer_volume_internal(&env, &buyer, &config)
+    }
+
+    pub fn get_buyer_tier(env: Env, buyer: Address) -> u32 {
+        let config: VolumeTierConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or_default();
+        config.tier(Self::buyer_volume_internal(&env, &buyer, &config))
+    }
+
+    pub fn get_volume_tiers(env: Env) -> VolumeTierConfig {
+        env.storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or_default()
+    }
+
     /// Add an address to the fee exemption whitelist. Admin only.
     pub fn add_fee_whitelist(env: Env, address: Address) -> Result<(), ContractError> {
         let admin = Self::assert_admin(&env)?;

@@ -30,6 +30,10 @@ pub use types::*;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod test_integer_safety;
+#[cfg(test)]
+mod test_volume;
 
 /// The MarketX escrow contract.
 ///

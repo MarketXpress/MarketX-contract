@@ -77,6 +77,8 @@ pub enum DataKey {
     TotalReleasedAmount,
     PendingFee(Address, Address),
     FeeWhitelist(Address),
+    BuyerVolume(Address),
+    VolumeTiers,
     Oracle,
     MilestoneEscrow(u64),
     TimeLockEscrow(u64),
@@ -149,6 +151,65 @@ pub const MAX_EVIDENCE_HASH_SIZE: u32 = 128;
 
 /// Maximum number of items per escrow
 pub const MAX_ITEMS_PER_ESCROW: u32 = 50;
+
+pub const VOLUME_RESET_INTERVAL: u32 = 1_576_800;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeTierConfig {
+    pub tier_1_threshold: i128,
+    pub tier_2_threshold: i128,
+    pub tier_3_threshold: i128,
+    pub tier_1_discount_bps: u32,
+    pub tier_2_discount_bps: u32,
+    pub tier_3_discount_bps: u32,
+    pub reset_ledger: u32,
+}
+
+impl Default for VolumeTierConfig {
+    fn default() -> Self {
+        Self {
+            tier_1_threshold: 100_000,
+            tier_2_threshold: 1_000_000,
+            tier_3_threshold: 10_000_000,
+            tier_1_discount_bps: 100,
+            tier_2_discount_bps: 250,
+            tier_3_discount_bps: 500,
+            reset_ledger: 0,
+        }
+    }
+}
+
+impl VolumeTierConfig {
+    pub fn tier(&self, volume: i128) -> u32 {
+        if volume >= self.tier_3_threshold {
+            3
+        } else if volume >= self.tier_2_threshold {
+            2
+        } else if volume >= self.tier_1_threshold {
+            1
+        } else {
+            0
+        }
+    }
+
+    pub fn discount_bps(&self, tier: u32) -> u32 {
+        match tier {
+            1 => self.tier_1_discount_bps,
+            2 => self.tier_2_discount_bps,
+            3 => self.tier_3_discount_bps,
+            _ => 0,
+        }
+    }
+}
+
+#[contractevent(topics = ["volume_updated"], data_format = "vec")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VolumeUpdatedEvent {
+    pub buyer: Address,
+    pub added_amount: i128,
+    pub new_volume: i128,
+}
 
 /// Maximum number of escrows that may be processed in a single
 /// `batch_collect_fees` call (#259).

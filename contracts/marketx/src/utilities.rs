@@ -110,7 +110,22 @@ impl Contract {
             return 0;
         }
 
-        let mut fee: i128 = amount * (fee_bps as i128) / 10_000;
+        let volume_config: VolumeTierConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or_default();
+        let volume = Self::buyer_volume_internal(env, buyer, &volume_config);
+        let discount = volume_config
+            .discount_bps(volume_config.tier(volume))
+            .min(500);
+        let effective_fee_bps = fee_bps.saturating_sub(discount);
+
+        let whole = amount / 10_000;
+        let remainder = amount % 10_000;
+        let mut fee: i128 = whole
+            .saturating_mul(effective_fee_bps as i128)
+            .saturating_add(remainder.saturating_mul(effective_fee_bps as i128) / 10_000);
 
         // Rounding protection: if bps > 0 and amount > 0, fee must be at least 1
         if fee == 0 && amount > 0 {
@@ -174,7 +189,43 @@ impl Contract {
             .publish(env);
         }
 
+        Self::update_buyer_volume(env, buyer, amount);
+
         Ok(fee)
+    }
+
+    pub(crate) fn buyer_volume_internal(
+        env: &Env,
+        buyer: &Address,
+        config: &VolumeTierConfig,
+    ) -> i128 {
+        if env.ledger().sequence().saturating_sub(config.reset_ledger) >= VOLUME_RESET_INTERVAL {
+            0
+        } else {
+            env.storage()
+                .persistent()
+                .get(&DataKey::BuyerVolume(buyer.clone()))
+                .unwrap_or(0)
+        }
+    }
+
+    pub(crate) fn update_buyer_volume(env: &Env, buyer: &Address, amount: i128) {
+        let mut config: VolumeTierConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::VolumeTiers)
+            .unwrap_or_default();
+        let current = Self::buyer_volume_internal(env, buyer, &config);
+        if env.ledger().sequence().saturating_sub(config.reset_ledger) >= VOLUME_RESET_INTERVAL {
+            config.reset_ledger = env.ledger().sequence();
+            env.storage()
+                .persistent()
+                .set(&DataKey::VolumeTiers, &config);
+        }
+        let new_volume = current.saturating_add(amount);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BuyerVolume(buyer.clone()), &new_volume);
     }
 
     pub(crate) fn validate_bytes_size(data: &Bytes, max: u32) -> Result<(), ContractError> {

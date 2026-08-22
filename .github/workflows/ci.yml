@@ -56,6 +56,7 @@ jobs:
               echo "- \`$f\`: $size bytes"
             done
           } >> "$GITHUB_STEP_SUMMARY"
+
           find target -name '*.wasm' -type f | sort | while read -r f; do
             size=$(stat -c%s "$f")
             echo "$f: $size bytes"
@@ -91,7 +92,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
-        run: cargo install cargo-tarpaulin --features nocoverage-compression
+        run: cargo install cargo-tarpaulin
       - name: Run coverage
         run: cargo tarpaulin --all-features --workspace --timeout 120 --out Stdout
 
@@ -103,6 +104,6 @@ jobs:
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - name: Check SDK error code parity
         run: python3 scripts/check_error_parity.py

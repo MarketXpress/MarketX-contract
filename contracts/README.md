@@ -18,7 +18,8 @@ contracts/
         ├── test.rs       # Unit & integration tests
         ├── test_integer_safety.rs  # Overflow / boundary tests
         ├── test_volume.rs          # Bulk-operation tests
-        └── tarpaulin.rs            # Coverage helpers
+tools/
+    └── tarpaulin.rs                # Coverage helpers (not compiled into the contract)
 ```
 
 ---

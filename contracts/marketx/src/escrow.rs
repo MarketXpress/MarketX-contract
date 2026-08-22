@@ -57,6 +57,13 @@ impl Contract {
         env.storage()
             .persistent()
             .set(&DataKey::TotalFeesCollected, &0i128);
+        env.storage().persistent().set(
+            &DataKey::VolumeTiers,
+            &VolumeTierConfig {
+                reset_ledger: env.ledger().sequence(),
+                ..VolumeTierConfig::default()
+            },
+        );
 
         Ok(())
     }

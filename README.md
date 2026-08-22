@@ -364,9 +364,9 @@ Persistent entries on Soroban expire unless their TTL is extended. The contract 
 
 ## Current Implementation Notes
 
-The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `resolve_dispute`, pause/unpause, fee updates, fee-collector rotation, storage rent estimation, and `bump_escrow`.
+The current public flows are `create_escrow`, `fund_escrow`, `release_escrow`, `release_partial`, `release_item`, `refund_escrow`, `resolve_dispute`, pause/unpause, fee updates, fee-collector rotation, storage rent estimation, and `bump_escrow`.
 
-`release_partial`, `refund_escrow`, and broader pending-state transitions are still placeholders and should not yet be treated as production-ready flows.
+`release_partial` supports arbitrary releases only for non-itemized funded escrows. Itemized escrows must use `release_item`; the contract rejects attempts to mix these release paths. `refund_escrow` is implemented and persists refund requests for dispute resolution.
 
 ## License
 

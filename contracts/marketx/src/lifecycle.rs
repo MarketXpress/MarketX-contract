@@ -178,6 +178,12 @@ impl Contract {
 
         Self::assert_escrow_funded(&escrow)?;
 
+        // Itemized escrows must be released through release_item so each item
+        // can only be paid once.
+        if !escrow.items.is_empty() {
+            return Err(ContractError::InvalidEscrowState);
+        }
+
         escrow.buyer.require_auth();
         let actor = escrow.buyer.clone();
         let from_status = escrow.status.clone();
@@ -210,9 +216,79 @@ impl Contract {
 
         Ok(())
     }
-    pub fn release_partial(env: Env, _escrow_id: u64, _amount: i128) -> Result<(), ContractError> {
+
+    /// Release part of a non-itemized funded escrow to the seller.
+    ///
+    /// Only the buyer can authorize a release. The escrow amount is reduced
+    /// by the released amount and becomes Released when its balance reaches
+    /// zero. Itemized escrows must use `release_item` instead.
+    ///
+    /// # Arguments
+    /// * `escrow_id` - The ID of the escrow
+    /// * `amount` - The positive amount to release
+    ///
+    /// # Errors
+    /// * `EscrowNotFound` - If the escrow doesn't exist
+    /// * `InvalidEscrowState` - If the escrow is not funded or is itemized
+    /// * `InvalidEscrowAmount` - If the amount is non-positive or exceeds the remaining balance
+    /// * `FeatureDisabled` - If partial releases are disabled
+    pub fn release_partial(env: Env, escrow_id: u64, amount: i128) -> Result<(), ContractError> {
         Self::assert_not_paused(&env)?;
         Self::assert_partial_releases_enabled(&env)?;
+
+        let mut escrow: Escrow = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Escrow(escrow_id))
+            .ok_or(ContractError::EscrowNotFound)?;
+
+        Self::assert_escrow_funded(&escrow)?;
+        if !escrow.items.is_empty() {
+            return Err(ContractError::InvalidEscrowState);
+        }
+        if amount <= 0 || amount > escrow.amount {
+            return Err(ContractError::InvalidEscrowAmount);
+        }
+
+        escrow.buyer.require_auth();
+        let from_status = escrow.status.clone();
+        let fee = Self::process_seller_transfer(
+            &env,
+            escrow_id,
+            amount,
+            &escrow.token,
+            &escrow.seller,
+            &escrow.buyer,
+        )?;
+
+        escrow.amount -= amount;
+        if escrow.amount == 0 {
+            escrow.status = EscrowStatus::Released;
+            escrow.cancellation_proposer = None;
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::Escrow(escrow_id), &escrow);
+
+        FundsReleasedEvent {
+            escrow_id,
+            amount,
+            fee,
+        }
+        .publish(&env);
+
+        if escrow.status != from_status {
+            Self::emit_status_change(
+                &env,
+                escrow_id,
+                from_status,
+                escrow.status.clone(),
+                escrow.buyer.clone(),
+            );
+        }
+
+        Self::add_i128(&env, DataKey::TotalReleasedAmount, amount);
+        Self::add_u32(&env, DataKey::TotalReleasedCount);
         Ok(())
     }
 

@@ -275,6 +275,169 @@ fn disabled_feature_flags_block_paths() {
 }
 
 #[test]
+fn partial_release_validates_amount_and_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    token_admin.mint(&buyer, &1000);
+
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.fund_escrow(&escrow_id);
+
+    assert_eq!(
+        client.try_release_partial(&999_999, &1),
+        Err(Ok(ContractError::EscrowNotFound))
+    );
+    assert_eq!(
+        client.try_release_partial(&escrow_id, &0),
+        Err(Ok(ContractError::InvalidEscrowAmount))
+    );
+    assert_eq!(
+        client.try_release_partial(&escrow_id, &-1),
+        Err(Ok(ContractError::InvalidEscrowAmount))
+    );
+    assert_eq!(
+        client.try_release_partial(&escrow_id, &1001),
+        Err(Ok(ContractError::InvalidEscrowAmount))
+    );
+}
+
+#[test]
+#[should_panic]
+fn non_buyer_cannot_make_partial_release() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    token_admin.mint(&buyer, &1000);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.fund_escrow(&escrow_id);
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &seller,
+            invoke: &MockAuthInvoke {
+                contract: &client.address,
+                fn_name: "release_partial",
+                args: (&escrow_id, 100i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .release_partial(&escrow_id, &100);
+}
+
+#[test]
+fn partial_release_transfers_remaining_balance_and_updates_analytics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let token = soroban_sdk::token::Client::new(&env, &token_id.address());
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    token_admin.mint(&buyer, &1000);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    client.fund_escrow(&escrow_id);
+
+    client.release_partial(&escrow_id, &400);
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.amount, 600);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Funded);
+    assert_eq!(token.balance(&seller), 400);
+    assert_eq!(client.get_total_released_amount(), 400);
+    assert_eq!(client.get_total_released_count(), 1);
+
+    client.release_partial(&escrow_id, &600);
+    let escrow = client.get_escrow(&escrow_id).unwrap();
+    assert_eq!(escrow.amount, 0);
+    assert_eq!(escrow.status, crate::types::EscrowStatus::Released);
+    assert_eq!(token.balance(&seller), 1000);
+    assert_eq!(client.get_total_released_amount(), 1000);
+    assert_eq!(client.get_total_released_count(), 2);
+}
+
+#[test]
+fn partial_release_cannot_be_used_with_itemized_escrow() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let seller = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_admin = soroban_sdk::token::StellarAssetClient::new(&env, &token_id.address());
+    let mut items = Vec::new(&env);
+    items.push_back(EscrowItem {
+        amount: 1000,
+        released: false,
+        description: None,
+    });
+
+    env.mock_all_auths();
+    client.initialize(&admin, &admin, &0, &0, &0);
+    token_admin.mint(&buyer, &1000);
+    let escrow_id = client.create_escrow(
+        &buyer,
+        &seller,
+        &token_id.address(),
+        &1000,
+        &None,
+        &None,
+        &Some(items),
+        &None,
+    );
+    client.fund_escrow(&escrow_id);
+
+    assert_eq!(
+        client.try_release_partial(&escrow_id, &500),
+        Err(Ok(ContractError::InvalidEscrowState))
+    );
+    assert_eq!(
+        client.try_release_escrow(&escrow_id),
+        Err(Ok(ContractError::InvalidEscrowState))
+    );
+}
+
+#[test]
 fn escrow_ids_increment_sequentially() {
     let (env, client) = setup();
     let admin = Address::generate(&env);

@@ -1,6 +1,6 @@
-# MarketX Contracts
+# Lumenbay Contracts
 
-Smart contracts powering the MarketX decentralized marketplace.
+Smart contracts powering the Lumenbay decentralized marketplace.
 
 This repository contains Soroban smart contracts written in Rust for handling escrow, payments, and core on-chain marketplace logic on the Stellar network.
 
@@ -8,7 +8,7 @@ This repository contains Soroban smart contracts written in Rust for handling es
 
 ## Overview
 
-MarketX leverages Stellar's Soroban smart contract platform to provide:
+Lumenbay leverages Stellar's Soroban smart contract platform to provide:
 
 - Secure escrow between buyers and sellers
 - Controlled fund release and refunds
@@ -328,7 +328,7 @@ There is intentionally no on-chain `EscrowsByBuyer` or `EscrowsBySeller` index. 
 
 Recommended indexer flow:
 
-1. Subscribe to all events for the MarketX contract ID.
+1. Subscribe to all events for the Lumenbay contract ID.
 2. On `EscrowCreatedEvent`, read `escrow_id` from the second topic and decode the data vector as `[buyer, seller, token, amount, status, arbiter]`.
 3. Upsert a canonical escrow record keyed by `escrow_id`.
 4. Append `escrow_id` to off-chain lookup tables keyed by `buyer` and `seller`.
